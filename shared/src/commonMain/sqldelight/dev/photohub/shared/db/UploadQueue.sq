@@ -80,5 +80,10 @@ LIMIT 1;
 delete:
 DELETE FROM UploadQueue WHERE id = ?;
 
+-- Removing a source entry removes its pending uploads along with it. Foreign
+-- keys are not enforced on every Android SQLite build, so do this explicitly.
+deleteBySource:
+DELETE FROM UploadQueue WHERE targetSourceId = ?;
+
 clearDone:
 DELETE FROM UploadQueue WHERE state = 'DONE';

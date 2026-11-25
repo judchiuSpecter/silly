@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
@@ -124,6 +126,7 @@ fun AccountsScreen(
                 onSetVisible = { show -> controller.setSourceVisible(source.id, show) },
                 onUploadNow = controller::uploadNow,
                 onRetry = { onRetrySource(source.id) },
+                onDelete = { scope.launch { controller.deleteSource(source.id) } },
             )
         }
 
@@ -223,7 +226,11 @@ private fun SourceCard(
     onSetVisible: (Boolean) -> Unit,
     onUploadNow: () -> Unit,
     onRetry: () -> Unit,
+    onDelete: () -> Unit,
 ) {
+    // A disconnected source has no live items to hide, so the toggle is inert
+    // until it is connected again (the device source is always live).
+    val showEnabled = account.type == SourceType.LOCAL || account.state == LinkState.LINKED
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -254,10 +261,19 @@ private fun SourceCard(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Show", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "Show",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (showEnabled) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
                     Switch(
                         checked = account.showInTimeline,
                         onCheckedChange = onSetVisible,
+                        enabled = showEnabled,
                     )
                 }
             }
@@ -398,6 +414,14 @@ private fun SourceCard(
                         }
                         OutlinedButton(onClick = onUnlink) { Text("Disconnect") }
                     }
+                }
+            }
+
+            // Separate from Disconnect: disconnecting keeps the entry and its
+            // history so it can be re-linked; this removes it from Silly only.
+            if (account.type != SourceType.LOCAL && account.state != LinkState.LINKING) {
+                TextButton(onClick = onDelete) {
+                    Text("Delete entry", color = MaterialTheme.colorScheme.error)
                 }
             }
 
@@ -567,6 +591,11 @@ private fun LinkMegaDialog(
                     label = { Text("Password") },
                     singleLine = true,
                     enabled = !busy,
+                    // PasswordVisualTransformation masks the text and marks it
+                    // as a password for accessibility/autofill. The keyboard
+                    // type matters too: the default plain-text keyboard offers
+                    // suggestions and can learn what was typed.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -641,6 +670,11 @@ private fun LinkNasDialog(
                     label = { Text("Password") },
                     singleLine = true,
                     enabled = !busy,
+                    // PasswordVisualTransformation masks the text and marks it
+                    // as a password for accessibility/autofill. The keyboard
+                    // type matters too: the default plain-text keyboard offers
+                    // suggestions and can learn what was typed.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )

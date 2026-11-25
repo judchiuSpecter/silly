@@ -187,7 +187,7 @@ class NasMediaSource(
     /** Opens one short-lived connection per call; the NAS is only occasionally reachable. */
     private fun <T> withClient(block: (SSHClient) -> T): T {
         val password = credentials() ?: error("Not connected to the NAS.")
-        val ssh = SSHClient()
+        val ssh = newNasSshClient()
         // QTS's default host key cannot be pinned without the user copying a
         // fingerprint off the NAS; the connection is already opted into by
         // entering its address, same trust model as its self-signed WebDAV cert.

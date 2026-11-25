@@ -5,10 +5,10 @@ import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.nas.NasArchiveWriter
 import dev.photohub.shared.source.nas.NasMediaSource
 import dev.photohub.shared.source.nas.NasSourceConfig
+import dev.photohub.shared.source.nas.newNasSshClient
 import okio.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 
 /**
@@ -43,7 +43,7 @@ class NasAccountFactory(
 
             // Verify the credentials actually work before saving anything, so a
             // typo does not leave a source that looks linked but never connects.
-            val ssh = SSHClient()
+            val ssh = newNasSshClient()
             ssh.addHostKeyVerifier(PromiscuousVerifier())
             ssh.connect(trimmedHost, port)
             try {

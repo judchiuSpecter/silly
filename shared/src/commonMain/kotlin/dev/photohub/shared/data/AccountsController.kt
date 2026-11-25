@@ -6,6 +6,7 @@ import dev.photohub.shared.auth.MegaAccounts
 import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.OAuthConfigLoader
+import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.model.StorageQuota
 import dev.photohub.shared.platform.BackgroundScheduler
@@ -339,15 +340,7 @@ class AccountsController(
      */
     suspend fun unlinkSource(id: String) {
         val source = repository.sourceById(id) ?: return
-        if (source.type == SourceType.MEGA) {
-            megas.unlink(id)
-        } else if (source.type == SourceType.GOOGLE_DRIVE) {
-            drives.forSource(id).tokens.unlink()
-        } else if (source.type == SourceType.NAS_ARCHIVE) {
-            nas.unlink(id)
-        } else {
-            return
-        }
+        if (!clearCredentials(source)) return
         repository.upsertCloudSource(
             id = id,
             type = source.type,
@@ -361,6 +354,41 @@ class AccountsController(
 
         message = "${source.displayName} disconnected."
         errors.remove(id)
+        publish()
+    }
+
+    private suspend fun clearCredentials(source: SourceConfig): Boolean = when (source.type) {
+        SourceType.MEGA -> {
+            megas.unlink(source.id)
+            true
+        }
+        SourceType.GOOGLE_DRIVE -> {
+            drives.forSource(source.id).tokens.unlink()
+            true
+        }
+        SourceType.NAS_ARCHIVE -> {
+            nas.unlink(source.id)
+            true
+        }
+        else -> false
+    }
+
+    /**
+     * Forgets a source entry completely — credentials, queued uploads and the
+     * indexed rows that came from it. Disconnect is the gentle version that
+     * keeps the card and its history; this is the explicit "remove it" action.
+     * Nothing in the cloud or on the NAS is deleted.
+     */
+    suspend fun deleteSource(id: String) {
+        val source = repository.sourceById(id) ?: return
+        clearCredentials(source)
+        repository.deleteSource(id)
+        if (linkingId == id) linkingId = null
+        errors.remove(id)
+        errorTypes.remove(id)
+        quotas.remove(id)
+        updateScheduler()
+        message = "${source.displayName} entry removed."
         publish()
     }
 

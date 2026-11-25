@@ -81,7 +81,7 @@ internal class NasArchiveWriter(
 
     private suspend fun <T> withClient(block: suspend (SFTPClient) -> T): T {
         val password = credentials() ?: error("Not connected to the NAS.")
-        val ssh = SSHClient()
+        val ssh = newNasSshClient()
         ssh.addHostKeyVerifier(PromiscuousVerifier())
         ssh.connect(settings.host, settings.port)
         ssh.authPassword(settings.username, password)

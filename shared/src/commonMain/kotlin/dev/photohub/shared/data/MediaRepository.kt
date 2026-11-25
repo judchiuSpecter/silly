@@ -160,7 +160,17 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     fun clearUploadTarget(id: String) = db.sourceQueries.clearUploadTarget(id)
 
     /** Removes a source; its media rows cascade away via the foreign key. */
-    fun deleteSource(id: String) = db.sourceQueries.delete(id)
+    /**
+     * Removes a source entry and its index rows. Cloud files are not touched;
+     * only Silly's local row, queued uploads and cached thumbnails go away.
+     * Foreign keys are not enforced on every Android SQLite build, so the
+     * children are deleted explicitly rather than relying on ON DELETE CASCADE.
+     */
+    fun deleteSource(id: String) {
+        db.uploadQueueQueries.deleteBySource(id)
+        db.mediaItemQueries.deleteBySource(id)
+        db.sourceQueries.delete(id)
+    }
 
     /**
      * Records the outcome of a sync attempt. Null clears a previous alert on
