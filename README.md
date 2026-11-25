@@ -1,6 +1,6 @@
 # Silly
 
-A minimalist image manager that pulls from a mosaic of sources.
+A vibe coded image manager that pulls from a mosaic of sources.
 
 Offline-first timeline across your local camera roll and one chosen cloud
 (Google Drive, MEGA, or OneDrive), with an optional NAS archive as an extra
