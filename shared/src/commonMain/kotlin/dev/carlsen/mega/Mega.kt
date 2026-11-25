@@ -47,6 +47,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
@@ -1081,7 +1082,22 @@ class Mega(
                         }
 
                         try {
-                            httpClient.get(events.w)
+                            // MEGA often hands back an http:// wait URL. On Android
+                            // cleartext is blocked, and on desktop the global 5-minute
+                            // request timeout made a stalled wait look like a frozen
+                            // app. Upgrade to HTTPS and bound just this long-poll.
+                            val waitUrl = if (events.w.startsWith("http://")) {
+                                "https://${events.w.removePrefix("http://")}"
+                            } else {
+                                events.w
+                            }
+                            httpClient.get(waitUrl) {
+                                timeout {
+                                    requestTimeoutMillis = 30_000
+                                    connectTimeoutMillis = 10_000
+                                    socketTimeoutMillis = 30_000
+                                }
+                            }
                         } catch (e: Exception) {
                             // Just log and continue - not critical
                             delay(2000)
