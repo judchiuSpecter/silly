@@ -35,6 +35,23 @@ class MegaUploadTarget(
         val materialized = materializeLocalFile(local)
         try {
             val destination = ensureFolder(remoteFolder)
+            val name = displayName(local)
+
+            // A retry only reaches here after the previous attempt's exception
+            // propagated as a failure — which also happens when MEGA received
+            // and stored the file but the client lost the connection before
+            // seeing confirmation. Without this check, that retry re-uploads
+            // and leaves two identical files in the folder; the local queue
+            // has no record of the first one succeeding, so its own dedupe
+            // (by content hash) never catches it either. See the matching fix
+            // in DriveUploader.upload().
+            account.mega.getChildren(destination)
+                .firstOrNull { it.isFile && it.name == name && it.size == size }
+                ?.let { existing ->
+                    onProgress(1f)
+                    return existing.hash
+                }
+
             val source = SystemFileSystem.source(KxPath(materialized.path.toString())).buffered()
             val node = account.mega.uploadFile(
                 destNode = destination,

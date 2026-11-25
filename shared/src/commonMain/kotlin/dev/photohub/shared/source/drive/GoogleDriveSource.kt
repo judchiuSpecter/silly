@@ -171,9 +171,14 @@ class GoogleDriveSource(
             mimeType = mimeType,
             isVideo = isVideo,
             sizeBytes = size?.toLongOrNull() ?: 0L,
-            // EXIF capture time first: createdTime is when it was *uploaded*,
-            // which for a migrated library is wrong by years.
+            // EXIF capture time first; then the WhatsApp-filename date, for
+            // files (nearly all WhatsApp media) that have no EXIF at all.
+            // createdTime/modifiedTime are when it was *uploaded*, which for
+            // a migrated library is wrong by years — and, for a batch of old
+            // WhatsApp photos uploaded together, wrong by the *same* amount
+            // for all of them, piling them onto one day in the timeline.
             dateTakenEpochMs = parseRfc3339(imageMediaMetadata?.time)
+                ?: parseWhatsAppFileName(name)
                 ?: parseRfc3339(createdTime)
                 ?: parseRfc3339(modifiedTime)
                 ?: 0L,

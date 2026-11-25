@@ -11,6 +11,7 @@ import dev.photohub.shared.platform.renderThumbnail
 import dev.photohub.shared.source.MediaPage
 import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.MediaTypes
+import dev.photohub.shared.source.drive.parseWhatsAppFileName
 import kotlinx.io.buffered
 import kotlinx.io.files.Path as KxPath
 import kotlinx.io.files.SystemFileSystem
@@ -71,7 +72,12 @@ class MegaSource(
                     mimeType = mime,
                     isVideo = MediaTypes.isVideoMime(mime),
                     sizeBytes = node.size,
-                    dateTakenEpochMs = node.timestamp.toEpochMilliseconds(),
+                    // MEGA's SDK exposes no EXIF, so node.timestamp (upload
+                    // time) is all there is — except for WhatsApp media,
+                    // which encodes its real capture date in the filename.
+                    // See the matching comment in GoogleDriveSource.
+                    dateTakenEpochMs = parseWhatsAppFileName(node.name)
+                        ?: node.timestamp.toEpochMilliseconds(),
                     // MEGA has no thumbnail URL; ThumbnailStore downloads and
                     // renders one into the cache before the grid needs it.
                     thumbnailUrl = null,

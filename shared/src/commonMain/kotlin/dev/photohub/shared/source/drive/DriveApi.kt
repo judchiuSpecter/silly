@@ -166,6 +166,35 @@ class DriveApi(
             .firstOrNull()
     }
 
+    /**
+     * Finds a non-trashed file named [name] of exactly [sizeBytes] under
+     * [parentId], or null when absent.
+     *
+     * Used before starting a new upload: if the connection drops after Drive
+     * already created the file but before the client saw the response, a
+     * naive retry would start a second resumable session and leave two
+     * identical files in the folder. Matching on name *and* size (rather than
+     * name alone) keeps this from mistaking a same-named-but-different photo
+     * — e.g. two WhatsApp images that happen to share a generic name — for
+     * the one this retry is resuming.
+     */
+    suspend fun findFileByNameAndSize(name: String, parentId: String, sizeBytes: Long): DriveFile? {
+        val safeName = name.replace("\\", "\\\\").replace("'", "\\'")
+        val clauses = listOf(
+            "name = '$safeName'",
+            "'$parentId' in parents",
+            "trashed = false",
+        )
+        val url = "$baseUrl/files" +
+            "?q=${clauses.joinToString(" and ").urlEncode()}" +
+            "&fields=${"files($fileFields)".urlEncode()}" +
+            "&pageSize=10&supportsAllDrives=true&includeItemsFromAllDrives=true"
+
+        return json.decodeFromString<DriveFileList>(authorizedGet(url).requireSuccess("find file"))
+            .files
+            .firstOrNull { it.size?.toLongOrNull() == sizeBytes }
+    }
+
     /** Creates a folder named [name] under [parentId]. */
     suspend fun createFolder(name: String, parentId: String?): DriveFile {
         val metadata = buildJsonObjectString(

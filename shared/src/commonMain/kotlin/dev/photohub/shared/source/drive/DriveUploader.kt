@@ -41,6 +41,16 @@ class DriveUploader(
      * "no such file".
      *
      * [onProgress] receives 0f..1f. Returns the created [DriveFile].
+     *
+     * Before starting a *new* session, this checks whether a same-named,
+     * same-sized file already exists in the folder. A retry only ever
+     * reaches here after the previous attempt's exception propagated as a
+     * failure — which also happens when Drive received and created the file
+     * but the client lost the connection before seeing the success response.
+     * Without this check, that retry starts a second resumable session and
+     * leaves two identical files in Drive; the local queue has no record of
+     * the first one succeeding, so its own dedupe (by content hash) never
+     * catches it either.
      */
     suspend fun upload(
         local: String,
@@ -49,10 +59,15 @@ class DriveUploader(
         onProgress: (Float) -> Unit = {},
     ): DriveFile {
         val total = fileSize(local) ?: error("Cannot determine size of $local")
+        val name = displayName(local)
 
         val folderId = api.ensureFolderPath(remoteFolderPath)
-        val sessionUrl = api.startResumableUpload(displayName(local), folderId, mimeType)
+        api.findFileByNameAndSize(name, folderId, total)?.let { existing ->
+            onProgress(1f)
+            return existing
+        }
 
+        val sessionUrl = api.startResumableUpload(name, folderId, mimeType)
         return uploadChunks(sessionUrl, local, total, onProgress)
     }
 

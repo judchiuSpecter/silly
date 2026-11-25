@@ -62,3 +62,40 @@ internal fun parseExifDateTime(
             .toEpochMilliseconds()
     }.getOrNull()
 }
+
+/** `IMG-YYYYMMDD-WA####.*`, the filename WhatsApp gives a saved photo or video. */
+private val whatsAppFileNamePattern = Regex("""^(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA\d+""")
+
+/**
+ * Recovers the capture date from a WhatsApp-style filename.
+ *
+ * WhatsApp strips EXIF (and `imageMediaMetadata.time`/`videoMediaMetadata`
+ * along with it) from everything it saves, so Drive's only other timestamps
+ * are `createdTime`/`modifiedTime` — when the file was uploaded, not taken.
+ * For a library migrated or backed up well after the fact, that is the day
+ * of the upload for every such file, which pushes years of old WhatsApp
+ * photos onto one day in the timeline, each looking like a "new" duplicate of
+ * whatever was actually taken that day. WhatsApp encodes the real date in the
+ * filename itself, so that is tried before the upload-time fallbacks.
+ *
+ * No time-of-day is in the filename, so this returns local midnight — later
+ * than EXIF would give, but it keeps the item on the right day, which is what
+ * the timeline groups by.
+ */
+internal fun parseWhatsAppFileName(
+    name: String,
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+): Long? {
+    val match = whatsAppFileNamePattern.find(name) ?: return null
+    val (yearText, monthText, dayText) = match.destructured
+    val year = yearText.toIntOrNull() ?: return null
+    val month = monthText.toIntOrNull() ?: return null
+    val day = dayText.toIntOrNull() ?: return null
+    if (year < 1900 || month !in 1..12 || day !in 1..31) return null
+
+    return runCatching {
+        LocalDateTime(year, month, day, 0, 0, 0)
+            .toInstant(zone)
+            .toEpochMilliseconds()
+    }.getOrNull()
+}
