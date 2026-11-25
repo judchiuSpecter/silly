@@ -22,7 +22,7 @@ import java.io.File
  *
  * HEIC is special: BitmapFactory cannot read it. Embedded previews are decoded
  * by the shared pure-Java helper; for files without one, Android's own hardware
- * decoder is tried before falling back to the much more expensive grid decode.
+ * decoder is tried. The full grid is never expanded just for a thumbnail.
  */
 /**
  * Capped lower than desktop: phones throttle under sustained all-core load, and
@@ -108,7 +108,6 @@ private suspend fun decodeHeic(file: File, maxEdge: Int): Bitmap? {
         decodeWithImageDecoder(file, maxEdge)?.let { return it }
     }
 
-    HeicDecoder.decodeFull(file)?.let { return it.toBitmap().fit(maxEdge) }
     return null
 }
 

@@ -31,8 +31,9 @@ actual suspend fun renderThumbnail(
     if (!file.isFile) return@withContext false
 
     val scaled = if (HeicDecoder.isHeic(file)) {
-        val heic = HeicDecoder.decodePreview(file) ?: HeicDecoder.decodeFull(file)
-            ?: return@withContext false
+        // Only the embedded preview is decoded. Expanding the full HEIF grid
+        // costs ~10s and ~800MB per file and made the timeline spin.
+        val heic = HeicDecoder.decodePreview(file) ?: return@withContext false
         scaleToFit(heic.toBufferedImage(), maxEdge)
     } else {
         val decoded = decodeSubsampled(file, maxEdge) ?: return@withContext false

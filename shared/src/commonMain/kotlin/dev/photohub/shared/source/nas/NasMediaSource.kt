@@ -7,8 +7,12 @@ import dev.photohub.shared.platform.renderThumbnail
 import dev.photohub.shared.source.MediaPage
 import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.MediaTypes
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
@@ -85,21 +89,23 @@ class NasMediaSource(
     override suspend fun fetchThumbnail(item: RemoteMedia, target: Path): Result<Path> =
         withContext(Dispatchers.IO) {
             runCatching {
-                if (item.isVideo && item.sizeBytes > MAX_VIDEO_THUMB_BYTES) {
-                    error("Video ${item.displayName} is too large to thumbnail")
-                }
-                target.parent?.let { fileSystem.createDirectories(it) }
-                val raw = target.parent?.resolve("${target.name}.original")
-                    ?: error("Thumbnail path has no parent directory")
-
-                try {
-                    downloadTo(item.remoteId, raw)
-                    if (!renderThumbnail(raw.toString(), target, THUMB_EDGE)) {
-                        error("Could not render a NAS thumbnail for ${item.displayName}")
+                withTimeout(NAS_THUMB_TIMEOUT_MS) {
+                    if (item.isVideo && item.sizeBytes > MAX_VIDEO_THUMB_BYTES) {
+                        error("Video ${item.displayName} is too large to thumbnail")
                     }
-                    target
-                } finally {
-                    runCatching { fileSystem.delete(raw) }
+                    target.parent?.let { fileSystem.createDirectories(it) }
+                    val raw = target.parent?.resolve("${target.name}.original")
+                        ?: error("Thumbnail path has no parent directory")
+
+                    try {
+                        downloadTo(item.remoteId, raw)
+                        if (!renderThumbnail(raw.toString(), target, THUMB_EDGE)) {
+                            error("Could not render a NAS thumbnail for ${item.displayName}")
+                        }
+                        target
+                    } finally {
+                        runCatching { fileSystem.delete(raw) }
+                    }
                 }
             }
         }
@@ -176,7 +182,7 @@ class NasMediaSource(
         }
     }
 
-    private fun downloadTo(remotePath: String, target: Path) {
+    private suspend fun downloadTo(remotePath: String, target: Path) {
         withClient { ssh ->
             ssh.newSFTPClient().use { sftp ->
                 sftp.get(remotePath, FileSystemFile(File(target.toString())))
@@ -184,22 +190,32 @@ class NasMediaSource(
         }
     }
 
-    /** Opens one short-lived connection per call; the NAS is only occasionally reachable. */
-    private fun <T> withClient(block: (SSHClient) -> T): T {
-        val password = credentials() ?: error("Not connected to the NAS.")
-        val ssh = newNasSshClient()
-        // QTS's default host key cannot be pinned without the user copying a
-        // fingerprint off the NAS; the connection is already opted into by
-        // entering its address, same trust model as its self-signed WebDAV cert.
-        ssh.addHostKeyVerifier(PromiscuousVerifier())
-        ssh.connect(settings.host, settings.port)
-        try {
-            ssh.authPassword(settings.username, password)
-            return block(ssh)
-        } finally {
-            runCatching { ssh.disconnect() }
+    /**
+     * Opens one short-lived connection per call; the NAS is only occasionally
+     * reachable. Closing the transport on cancellation is essential: sshj's
+     * SFTP reads are blocking, so without this a timed-out thumbnail would keep
+     * an IO dispatcher thread parked on the socket until the read finished.
+     */
+    private suspend fun <T> withClient(block: (SSHClient) -> T): T =
+        withContext(Dispatchers.IO) {
+            val password = credentials() ?: error("Not connected to the NAS.")
+            val ssh = newNasSshClient()
+            // QTS's default host key cannot be pinned without the user copying a
+            // fingerprint off the NAS; the connection is already opted into by
+            // entering its address, same trust model as its self-signed WebDAV cert.
+            ssh.addHostKeyVerifier(PromiscuousVerifier())
+            val closeOnCancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) runCatching { ssh.disconnect() }
+            }
+            try {
+                ssh.connect(settings.host, settings.port)
+                ssh.authPassword(settings.username, password)
+                block(ssh)
+            } finally {
+                closeOnCancel?.dispose()
+                runCatching { ssh.disconnect() }
+            }
         }
-    }
 
     private fun RemoteResourceInfo.toRemoteMedia(mime: String): RemoteMedia {
         val attrs = attributes
@@ -220,6 +236,7 @@ class NasMediaSource(
 
     private companion object {
         const val THUMB_EDGE = 384
+        const val NAS_THUMB_TIMEOUT_MS = 30_000L
         const val MAX_VIDEO_THUMB_BYTES = 50L * 1024 * 1024
 
         /** QTS system folders that live inside every share; never real photos. */

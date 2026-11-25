@@ -1,7 +1,5 @@
 package dev.photohub.shared.platform
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import openize.heic.decoder.HeicImage
 import openize.heic.decoder.PixelFormat
 import openize.io.IOMode
@@ -14,19 +12,13 @@ import java.io.File
  * iPhone HEIC files store a small, non-derived preview image alongside the
  * full-resolution grid. Decoding that preview is two orders of magnitude
  * cheaper than expanding the grid (milliseconds versus ~10 seconds and roughly
- * 800 MB of peak heap), so thumbnails always prefer it. Files without a visible
- * preview fall back to the full image on desktop; [decodeFull] serializes those
- * decodes because even one uses enough memory that two would risk an OOM.
+ * 800 MB of peak heap). Files without a visible preview are skipped rather than
+ * falling back to the grid: that fallback made desktop thumbnailing look hung.
  */
 object HeicDecoder {
 
     /** RGBA pixels in [width]/[height] order, as produced by Openize's Rgba32 format. */
     data class Rgba(val width: Int, val height: Int, val pixels: ByteArray)
-
-    /** Upper bound before a full-grid decode is refused; protects against pathological files. */
-    private const val MAX_FULL_PIXELS = 40_000_000
-
-    private val heavyDecodeLock = Mutex()
 
     /**
      * True when [file] has an ISO-BMFF `ftyp` box with a HEIF-compatible brand.
@@ -86,22 +78,4 @@ object HeicDecoder {
             Rgba(width, height, bytes)
         }
     }.getOrNull()
-
-    /**
-     * Decodes the default (usually grid) image as a last resort. The caller
-     * must downscale immediately; holding many of these at once exhausts heap.
-     */
-    suspend fun decodeFull(file: File): Rgba? = heavyDecodeLock.withLock {
-        runCatching {
-            IOFileStream(file, IOMode.READ).use { stream ->
-                val image = HeicImage.load(stream)
-                val width = image.width.toInt()
-                val height = image.height.toInt()
-                if (width <= 0 || height <= 0 || width.toLong() * height > MAX_FULL_PIXELS) return null
-                val bytes = image.getByteArray(PixelFormat.Rgba32) ?: return null
-                if (bytes.size < width * height * 4) return null
-                Rgba(width, height, bytes)
-            }
-        }.getOrNull()
-    }
 }
