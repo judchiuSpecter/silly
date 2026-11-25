@@ -3,6 +3,7 @@ package dev.photohub.shared
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.SourceType
 import kotlin.test.Test
 import kotlin.test.assertEquals

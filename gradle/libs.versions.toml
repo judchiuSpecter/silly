@@ -35,6 +35,11 @@ stately = "2.1.0"
 # Its own transitive dependency (metadata-extractor, Apache 2.0) resolves
 # from Maven Central as normal.
 openize-heic = "26.5"
+# Video playback: androidx.media3/ExoPlayer on Android, JavaFX media embedded
+# via SwingPanel on desktop. Each ships its own decoders, so neither needs a
+# system install (no VLC dependency).
+androidx-media3 = "1.11.1"
+javafx = "21.0.7"
 
 [libraries]
 # Kotlinx
@@ -99,6 +104,13 @@ androidx-lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycl
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidx-securityCrypto" }
 androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "androidx-exifinterface" }
+
+# Video playback
+androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "androidx-media3" }
+androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "androidx-media3" }
+# JavaFX (desktop video player, embedded via SwingPanel) ships one jar per
+# OS/arch rather than through a catalog-friendly artifact, so shared/build.gradle.kts
+# builds its coordinates directly from `javafx` above plus a runtime-detected classifier.
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

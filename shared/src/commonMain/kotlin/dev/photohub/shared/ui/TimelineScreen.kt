@@ -7,6 +7,8 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,8 +28,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -47,10 +51,11 @@ import kotlinx.datetime.format.char
  * day sections with a header per day — the Google Photos shape, without the
  * Discover/Memories surfaces.
  *
- * Selection is hoisted so the app can run Delete/Archive on the chosen items and
+ * Selection is hoisted so the app can run Delete/Move on the chosen items and
  * clear the selection when the action completes. Hover reveals a checkbox on
  * desktop; long-press is the touch fallback for entering multiselect mode.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TimelineScreen(
     items: List<MediaItem>,
@@ -59,10 +64,9 @@ fun TimelineScreen(
     onSelectionChange: (Set<String>) -> Unit = {},
     onItemClick: (MediaItem) -> Unit = {},
     onDeleteSelected: (List<MediaItem>) -> Unit = {},
-    onArchiveSelected: (List<MediaItem>) -> Unit = {},
-    onInfoClick: (MediaItem) -> Unit = {},
-    showTileInfo: Boolean = true,
-    canArchive: (MediaItem) -> Boolean = { true },
+    onMoveSelected: (List<MediaItem>) -> Unit = {},
+    sourceNames: Map<String, String> = emptyMap(),
+    canMove: Boolean = false,
     busy: Boolean = false,
 ) {
     if (items.isEmpty()) {
@@ -78,6 +82,7 @@ fun TimelineScreen(
 
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    var showBulkSelect by remember { mutableStateOf(false) }
 
     fun toggle(id: String) {
         onSelectionChange(if (id in selectedIds) selectedIds - id else selectedIds + id)
@@ -127,9 +132,7 @@ fun TimelineScreen(
                         ),
                         selectionMode = selectionMode,
                         selected = media.id in selectedIds,
-                        showInfoButton = showTileInfo,
                         onToggleSelection = { toggle(media.id) },
-                        onInfoClick = { onInfoClick(media) },
                     )
                 }
             }
@@ -159,10 +162,11 @@ fun TimelineScreen(
                     .padding(12.dp)
                     .fillMaxWidth(),
             ) {
-                Row(
+                FlowRow(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    itemVerticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Column(modifier = Modifier.padding(end = 8.dp)) {
                         Text(
@@ -176,18 +180,34 @@ fun TimelineScreen(
                         )
                     }
                     TextButton(
+                        onClick = { showBulkSelect = true },
+                        enabled = !busy,
+                    ) { Text("Select by…") }
+                    TextButton(
                         onClick = { onSelectionChange(emptySet()) },
                         enabled = !busy,
                     ) { Text("Cancel") }
                     Button(
-                        onClick = { onArchiveSelected(selectedItems) },
-                        enabled = !busy && selectedItems.all(canArchive),
-                    ) { Text("Archive") }
+                        onClick = { onMoveSelected(selectedItems) },
+                        enabled = !busy && canMove,
+                    ) { Text("Move") }
                     Button(
                         onClick = { onDeleteSelected(selectedItems) },
                         enabled = !busy,
                     ) { Text("Delete") }
                 }
+            }
+
+            if (showBulkSelect) {
+                BulkSelectDialog(
+                    items = items,
+                    sourceNames = sourceNames,
+                    onDismiss = { showBulkSelect = false },
+                    onApply = { ids ->
+                        onSelectionChange(ids)
+                        showBulkSelect = false
+                    },
+                )
             }
         }
     }

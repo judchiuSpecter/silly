@@ -66,7 +66,7 @@ class ArchiveController(
 
     /** True when the button can do anything useful right now. */
     fun canArchive(): Boolean {
-        val target = repository.archiveTarget()
+        val target = repository.moveTarget()
         val all = repository.allSources()
         return target != null && target.enabled && target.type == SourceType.NAS_ARCHIVE &&
             nas.isLinked(target.id) &&
@@ -84,7 +84,7 @@ class ArchiveController(
         }
 
         val all = repository.allSources()
-        val target = repository.archiveTarget()
+        val target = repository.moveTarget()
         val nasConfig = target?.takeIf {
             it.enabled && it.type == SourceType.NAS_ARCHIVE && nas.isLinked(it.id)
         } ?: return fail("Choose a connected NAS as the archive target in Settings first.")

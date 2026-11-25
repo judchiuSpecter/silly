@@ -18,7 +18,6 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import dev.photohub.shared.auth.AndroidRedirectCapture
 import dev.photohub.shared.data.AccountsController
-import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.MediaInfoController
 import dev.photohub.shared.data.PhotoActionsController
@@ -35,7 +34,6 @@ class MainActivity : ComponentActivity() {
     private val settings: SettingsStore by inject()
     private val fullscreenImages: FullscreenImageController by inject()
     private val photoActions: PhotoActionsController by inject()
-    private val archiver: ArchiveController by inject()
     private val mediaInfo: MediaInfoController by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,7 +66,6 @@ class MainActivity : ComponentActivity() {
                 settings = settings,
                 fullscreenImages = fullscreenImages,
                 photoActions = photoActions,
-                archiver = archiver,
                 mediaInfo = mediaInfo,
             )
         }

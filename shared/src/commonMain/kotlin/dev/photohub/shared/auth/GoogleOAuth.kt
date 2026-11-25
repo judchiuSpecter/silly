@@ -85,6 +85,10 @@ class GoogleOAuthClient(
      * `prompt=consent` forces one to be re-issued even if the user has already
      * approved the app — without it a re-link can silently yield no refresh
      * token and background upload breaks the next time the access token lapses.
+     * `select_account` forces Google's account chooser every time, rather than
+     * silently reusing whatever Google account the browser is already signed
+     * into — PhotoHub supports multiple Drive instances, so each link/re-link
+     * must let the user pick which account, not just approve one chosen for it.
      */
     fun authorizationUrl(
         pkce: PkceChallenge,
@@ -100,7 +104,7 @@ class GoogleOAuthClient(
             "code_challenge_method" to pkce.method,
             "state" to state,
             "access_type" to "offline",
-            "prompt" to "consent",
+            "prompt" to "select_account consent",
         )
         return authEndpoint + "?" + params.joinToString("&") { (k, v) ->
             "${k.urlEncode()}=${v.urlEncode()}"

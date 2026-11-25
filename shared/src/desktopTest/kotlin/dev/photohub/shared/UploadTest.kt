@@ -11,6 +11,7 @@ import dev.photohub.shared.auth.TokenProvider
 import dev.photohub.shared.data.UploadManager
 import dev.photohub.shared.data.UploadTarget
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.source.drive.DriveApi
 import dev.photohub.shared.source.drive.DriveApiException
 import dev.photohub.shared.source.drive.DriveUploader

@@ -10,7 +10,6 @@ import dev.photohub.shared.auth.DesktopCredentialStore
 import dev.photohub.shared.auth.DesktopRedirectCapture
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.data.AccountsController
-import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.MediaInfoController
 import dev.photohub.shared.data.PhotoActionsController
@@ -40,7 +39,6 @@ fun main() {
     val settings = koin.get<SettingsStore>()
     val fullscreenImages = koin.get<FullscreenImageController>()
     val photoActions = koin.get<PhotoActionsController>()
-    val archiver = koin.get<ArchiveController>()
     val mediaInfo = koin.get<MediaInfoController>()
 
     application {
@@ -58,7 +56,6 @@ fun main() {
                     settings = settings,
                     fullscreenImages = fullscreenImages,
                     photoActions = photoActions,
-                    archiver = archiver,
                     mediaInfo = mediaInfo,
                 )
         }

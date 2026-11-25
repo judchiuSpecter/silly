@@ -56,8 +56,10 @@ data class SourceConfig(
     val enabled: Boolean,
     val isUploadTarget: Boolean,
     val configJson: String,
-    /** The one source that receives explicit Archive actions. */
-    val isArchiveTarget: Boolean = false,
+    /** The one source that receives explicit Move actions. */
+    val isMoveTarget: Boolean = false,
+    /** Whether this source's items appear in the timeline. */
+    val showInTimeline: Boolean = true,
     /** Set when the last sync attempt failed; null once it succeeds again. */
     val lastSyncError: String? = null,
 )

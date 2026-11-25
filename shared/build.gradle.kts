@@ -34,6 +34,10 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.components.resources)
+            // graphicsLayer (pinch-zoom transform) and onPointerEvent (desktop
+            // scroll-to-zoom) live in org.jetbrains.compose.ui:ui, which the
+            // `compose.*` alias block does not expose directly.
+            implementation("org.jetbrains.compose.ui:ui:${libs.versions.compose.multiplatform.get()}")
 
             // Lifecycle / ViewModel (KMP flavour from JetBrains)
             implementation(libs.androidx.lifecycle.viewmodel)
@@ -99,6 +103,9 @@ kotlin {
             implementation(libs.androidx.exifinterface)
             // BackHandler for the fullscreen viewer's system-back dismissal.
             implementation(libs.androidx.activity.compose)
+            // Video playback in the fullscreen viewer.
+            implementation(libs.androidx.media3.exoplayer)
+            implementation(libs.androidx.media3.ui)
         }
 
         desktopMain.dependencies {
@@ -107,6 +114,16 @@ kotlin {
             implementation(libs.ktor.client.java)
             implementation(libs.cryptography.provider.jdk)
             implementation(libs.sqldelight.sqlite.driver)
+            // Video playback: JavaFX media embedded via SwingPanel. JavaFX ships
+            // no cross-platform artifact, only one native-classifier jar per
+            // OS/arch, so the classifier for the machine running the build is
+            // appended directly to the coordinate below.
+            val fxVersion = libs.versions.javafx.get()
+            val fx = javafxClassifier()
+            implementation("org.openjfx:javafx-base:$fxVersion:$fx")
+            implementation("org.openjfx:javafx-graphics:$fxVersion:$fx")
+            implementation("org.openjfx:javafx-media:$fxVersion:$fx")
+            implementation("org.openjfx:javafx-swing:$fxVersion:$fx")
         }
 
         desktopTest.dependencies {
@@ -127,5 +144,24 @@ sqldelight {
             // verifyMigrations stays off until the first .sqm migration file exists.
             schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
         }
+    }
+}
+
+/**
+ * JavaFX's Maven artifacts ship one jar per OS/arch rather than a single
+ * cross-platform jar, keyed by this Maven classifier. Desktop app packaging
+ * already builds one installer per OS (see [compose.desktop.application] in
+ * :desktop), so picking the classifier for the machine running the build
+ * matches how the rest of the project already handles platform-specific
+ * native code.
+ */
+fun javafxClassifier(): String {
+    val os = org.gradle.internal.os.OperatingSystem.current()
+    val arch = System.getProperty("os.arch")
+    return when {
+        os.isMacOsX -> if (arch == "aarch64") "mac-aarch64" else "mac"
+        os.isWindows -> "win"
+        arch == "aarch64" -> "linux-aarch64"
+        else -> "linux"
     }
 }

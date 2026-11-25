@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
-import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.MediaInfo
 import dev.photohub.shared.data.MediaInfoController
@@ -60,7 +59,6 @@ fun App(
     settings: SettingsStore = SettingsStore(),
     fullscreenImages: FullscreenImageController? = null,
     photoActions: PhotoActionsController? = null,
-    archiver: ArchiveController? = null,
     mediaInfo: MediaInfoController? = null,
 ) {
     val state by controller.state.collectAsState()
@@ -71,12 +69,35 @@ fun App(
     val noActions = remember { MutableStateFlow(PhotoActionsController.State()) }
     val actionState by (photoActions?.state ?: noActions).collectAsState()
 
+    val noAccounts = remember { MutableStateFlow(AccountsController.State()) }
+    val accountState by (accounts?.state ?: noAccounts).collectAsState()
+    // A null accounts graph cannot express visibility, so it shows everything.
+    val visibleIds = remember(accounts, accountState.sources) {
+        if (accounts == null) {
+            null
+        } else {
+            accountState.sources.filter { it.showInTimeline }.map { it.id }.toSet()
+        }
+    }
+    val visibleItems = remember(state.items, visibleIds) {
+        visibleIds?.let { ids -> state.items.filter { it.sourceId in ids } } ?: state.items
+    }
+    val sourceNames = remember(accountState.sources) {
+        accountState.sources.associate { it.id to it.displayName }
+    }
+    val hasAnyMoveDestination = accountState.sources.any {
+        it.canReceiveMoves && it.state == AccountsController.LinkState.LINKED
+    }
+
     /** Item being shown full-screen, or null when on the timeline grid. */
     var selectedItem by remember { mutableStateOf<MediaItem?>(null) }
     /** Ids selected on the timeline; empty means normal single-item navigation. */
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     /** Non-null while the delete confirmation dialog is on screen. */
     var pendingDelete by remember { mutableStateOf<List<MediaItem>?>(null) }
+    /** Items waiting for the user to pick a Move destination. */
+    var pendingMove by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var showNoMoveDestination by remember { mutableStateOf(false) }
     /** Item whose info panel is open, from either the grid or the viewer. */
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     var infoPanelState by remember { mutableStateOf(MediaInfoPanelState()) }
@@ -86,7 +107,7 @@ fun App(
         infoPanelState = MediaInfoPanelState(loading = true)
         // The App's state may have refreshed since the tap; prefer the fresh row
         // so a newly cached original or EXIF blob is visible immediately.
-        val fresh = state.items.firstOrNull { it.id == item.id } ?: item
+        val fresh = visibleItems.firstOrNull { it.id == item.id } ?: item
         val result = runCatching {
             mediaInfo?.info(fresh) ?: MediaInfo.from(fresh, fresh.sourceId)
         }
@@ -128,11 +149,31 @@ fun App(
         if (prefs.confirmDelete) pendingDelete = items else performDelete(items)
     }
 
-    fun performArchive(items: List<MediaItem>) {
+    fun moveDestinationsFor(items: List<MediaItem>): List<MoveDestination> {
+        val excluded = items.map { it.sourceId }.toSet()
+        return accountState.sources
+            .filter {
+                it.canReceiveMoves &&
+                    it.state == AccountsController.LinkState.LINKED &&
+                    it.id !in excluded
+            }
+            .map { MoveDestination(it.id, it.displayName) }
+    }
+
+    fun requestMove(items: List<MediaItem>) {
+        if (photoActions == null || items.isEmpty()) return
+        if (moveDestinationsFor(items).isEmpty()) {
+            showNoMoveDestination = true
+            return
+        }
+        pendingMove = items
+    }
+
+    fun performMove(items: List<MediaItem>, destinationId: String) {
         val actions = photoActions ?: return
         if (items.isEmpty()) return
         scope.launch {
-            actions.archive(items)
+            actions.move(items, destinationId)
             finishAction()
         }
     }
@@ -199,16 +240,15 @@ fun App(
                                 )
                             }
                             TimelineScreen(
-                                items = state.items,
+                                items = visibleItems,
                                 modifier = Modifier.fillMaxSize(),
                                 selectedIds = selectedIds,
                                 onSelectionChange = { selectedIds = it },
                                 onItemClick = { selectedItem = it },
                                 onDeleteSelected = { requestDelete(it) },
-                                onArchiveSelected = { performArchive(it) },
-                                onInfoClick = { infoItem = it },
-                                showTileInfo = prefs.showTileInfo,
-                                canArchive = { item -> photoActions?.canArchive(item) ?: false },
+                                onMoveSelected = { requestMove(it) },
+                                sourceNames = sourceNames,
+                                canMove = hasAnyMoveDestination,
                                 busy = actionState.running,
                             )
                         }
@@ -220,11 +260,7 @@ fun App(
                                 onThemeModeChange = settings::setThemeMode,
                                 confirmDelete = prefs.confirmDelete,
                                 onConfirmDeleteChange = settings::setConfirmDelete,
-                                showTileInfo = prefs.showTileInfo,
-                                onShowTileInfoChange = settings::setShowTileInfo,
                                 onRetrySource = { id -> scope.launch { controller.retrySource(id) } },
-                                archiver = archiver,
-                                onArchiveComplete = { scope.launch { controller.refresh() } },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -233,7 +269,7 @@ fun App(
 
                 // Fullscreen photo viewer overlay
                 selectedItem?.let { current ->
-                    val index = state.items.indexOfFirst { it.id == current.id }
+                    val index = visibleItems.indexOfFirst { it.id == current.id }
                     FullscreenPhotoViewer(
                         item = current,
                         onDismiss = {
@@ -241,17 +277,17 @@ fun App(
                         },
                         images = fullscreenImages,
                         onPrevious = {
-                            if (index > 0) selectedItem = state.items[index - 1]
+                            if (index > 0) selectedItem = visibleItems[index - 1]
                         },
                         onNext = {
-                            if (index in 0 until state.items.lastIndex) {
-                                selectedItem = state.items[index + 1]
+                            if (index in 0 until visibleItems.lastIndex) {
+                                selectedItem = visibleItems[index + 1]
                             }
                         },
                         onDelete = { requestDelete(listOf(current)) },
-                        onArchive = { performArchive(listOf(current)) },
+                        onMove = { requestMove(listOf(current)) },
                         onInfo = { infoItem = current },
-                        canArchive = photoActions?.canArchive(current) ?: false,
+                        canMove = hasAnyMoveDestination,
                         busy = actionState.running,
                     )
                 }
@@ -280,6 +316,35 @@ fun App(
                         },
                         dismissButton = {
                             TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                        },
+                    )
+                }
+
+                pendingMove?.let { items ->
+                    MoveDestinationDialog(
+                        destinations = moveDestinationsFor(items),
+                        onDismiss = { pendingMove = null },
+                        onSelect = { destinationId ->
+                            pendingMove = null
+                            performMove(items, destinationId)
+                        },
+                    )
+                }
+
+                if (showNoMoveDestination) {
+                    AlertDialog(
+                        onDismissRequest = { showNoMoveDestination = false },
+                        title = { Text("No move destination") },
+                        text = {
+                            Text(
+                                "Connect at least one other Drive, MEGA, or NAS source, " +
+                                    "then choose it when you move.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showNoMoveDestination = false }) {
+                                Text("Got it")
+                            }
                         },
                     )
                 }

@@ -14,6 +14,7 @@ import dev.photohub.shared.data.PhotoActionsController
 import dev.photohub.shared.data.UploadTarget
 import dev.photohub.shared.db.MediaItem
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.RemoteMedia
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
@@ -192,7 +193,7 @@ class PhotoActionsControllerTest {
         val repository = MediaRepository(db)
         repository.upsertCloudSource("src", SourceType.MEGA, "Source account")
         repository.upsertCloudSource("dst", SourceType.MEGA, "Archive account")
-        if (setTarget) repository.setArchiveTarget("dst")
+        if (setTarget) repository.setMoveTarget("dst")
 
         val controller = PhotoActionsController(
             repository = repository,
@@ -242,13 +243,13 @@ class PhotoActionsControllerTest {
     }
 
     @Test
-    fun archiveCopiesVerifiesThenDeletesTheSource() = runTest {
+    fun moveCopiesVerifiesThenDeletesTheSource() = runTest {
         val source = FakeSource(config("src"))
         val target = FakeSource(config("dst"))
         val h = harness(source, target)
         h.insertItem()
 
-        val outcome = h.controller.archive(listOf(h.item())).getOrThrow()
+        val outcome = h.controller.move(listOf(h.item()), "dst").getOrThrow()
 
         assertEquals(1, outcome.succeeded)
         assertEquals(1, target.uploads)
@@ -264,7 +265,7 @@ class PhotoActionsControllerTest {
         val h = harness(source, target)
         h.insertItem()
 
-        val outcome = h.controller.archive(listOf(h.item())).getOrThrow()
+        val outcome = h.controller.move(listOf(h.item()), "dst").getOrThrow()
 
         assertEquals(1, outcome.failed)
         assertTrue(source.deletedIds.isEmpty(), "the original must survive a bad copy")
@@ -274,29 +275,28 @@ class PhotoActionsControllerTest {
     }
 
     @Test
-    fun archivingFromTheArchiveTargetItselfIsRejected() = runTest {
+    fun movingToTheSourceItselfIsRejected() = runTest {
         val source = FakeSource(config("src"))
         val target = FakeSource(config("dst"))
         val h = harness(source, target)
         h.insertItem(id = "dst:1", sourceId = "dst")
 
-        assertFalse(h.controller.canArchive(h.item("dst:1")))
-        val outcome = h.controller.archive(listOf(h.item("dst:1"))).getOrThrow()
+        val result = h.controller.move(listOf(h.item("dst:1")), "dst")
 
-        assertEquals(1, outcome.failed)
+        assertFalse(result.isSuccess)
         assertTrue(source.deletedIds.isEmpty())
         assertTrue(target.deletedIds.isEmpty())
         assertNotNull(h.repository.itemById("dst:1"))
     }
 
     @Test
-    fun meteredNetworkRefusesToArchive() = runTest {
+    fun meteredNetworkRefusesToMove() = runTest {
         val source = FakeSource(config("src"))
         val target = FakeSource(config("dst"))
         val h = harness(source, target, networkAllowed = { false })
         h.insertItem()
 
-        val result = h.controller.archive(listOf(h.item()))
+        val result = h.controller.move(listOf(h.item()), "dst")
 
         assertFalse(result.isSuccess)
         assertEquals(0, target.uploads)

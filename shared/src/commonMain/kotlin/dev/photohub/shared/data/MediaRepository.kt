@@ -1,6 +1,7 @@
 package dev.photohub.shared.data
 
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.LocalSourceConfig
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
@@ -39,10 +40,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             .selectById(LocalSourceConfig.SOURCE_ID)
             .executeAsOneOrNull()
 
-        if (existing != null) {
-            ensureArchiveTargetFallback()
-            return existing.toSourceConfig()
-        }
+        if (existing != null) return existing.toSourceConfig()
 
         val created = SourceConfig(
             id = LocalSourceConfig.SOURCE_ID,
@@ -65,20 +63,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             sortOrder = 0L,
             lastSyncError = null,
         )
-        ensureArchiveTargetFallback()
         return created
-    }
-
-    /**
-     * Existing installs had a NAS archiver but no explicit archive-target flag.
-     * Adopt the first enabled NAS once so both the old bulk archiver and the new
-     * per-photo Archive action have a target without forcing the user to choose.
-     */
-    private fun ensureArchiveTargetFallback() {
-        if (archiveTarget() != null) return
-        allSources().firstOrNull {
-            it.enabled && it.type == SourceType.NAS_ARCHIVE
-        }?.let { setArchiveTarget(it.id) }
     }
 
     /** Every configured source, for the sources screen. */
@@ -96,26 +81,30 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     fun setMetadata(json: String, mediaId: String) =
         db.mediaItemQueries.setMetadata(json, mediaId)
 
-    /** The source camera uploads go to, or null when none is configured. */
+    /** The source Local Photo Sync writes to, or null when none is configured. */
     fun uploadTarget(): SourceConfig? =
         db.sourceQueries.selectUploadTarget().executeAsOneOrNull()?.toSourceConfig()
 
-    /** The single source that receives explicit Archive actions. */
-    fun archiveTarget(): SourceConfig? =
-        db.sourceQueries.selectArchiveTarget().executeAsOneOrNull()?.toSourceConfig()
+    /** The single source that receives explicit Move actions. */
+    fun moveTarget(): SourceConfig? =
+        db.sourceQueries.selectMoveTarget().executeAsOneOrNull()?.toSourceConfig()
 
     /**
-     * Moves the archive slot to [id]. The clear-then-set pair is what enforces
-     * "exactly one", just as it does for the camera upload target.
+     * Moves the destination slot to [id]. The clear-then-set pair is what
+     * enforces "exactly one", just as it does for the Local Photo Sync target.
      */
-    fun setArchiveTarget(id: String) {
+    fun setMoveTarget(id: String) {
         if (sourceById(id) == null) return
-        db.sourceQueries.clearAllArchiveTargets()
-        db.sourceQueries.setArchiveTarget(id)
+        db.sourceQueries.clearAllMoveTargets()
+        db.sourceQueries.setMoveTarget(id)
     }
 
-    /** Clears the archive slot on one source (used when it is disconnected). */
-    fun clearArchiveTarget(id: String) = db.sourceQueries.clearArchiveTarget(id)
+    /** Clears the Move slot on one source (used when it is disconnected). */
+    fun clearMoveTarget(id: String) = db.sourceQueries.clearMoveTarget(id)
+
+    /** Hides or shows one source's items in the timeline. */
+    fun setSourceVisible(id: String, show: Boolean) =
+        db.sourceQueries.setSourceVisible(if (show) 1L else 0L, id)
 
     /**
      * Registers (or updates) a cloud source.
@@ -162,7 +151,8 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             enabled = enabled,
             isUploadTarget = isTarget,
             configJson = resolvedConfig,
-            isArchiveTarget = existing?.isArchiveTarget == 1L,
+            isMoveTarget = existing?.isArchiveTarget == 1L,
+            showInTimeline = existing?.isVisible == 1L,
         )
     }
 
@@ -187,6 +177,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
         isUploadTarget = isUploadTarget == 1L,
         configJson = configJson,
         lastSyncError = lastSyncError,
-        isArchiveTarget = isArchiveTarget == 1L,
+        isMoveTarget = isArchiveTarget == 1L,
+        showInTimeline = isVisible == 1L,
     )
 }

@@ -214,7 +214,7 @@ class AccountsControllerTest {
     }
 
     @Test
-    fun successfulLinkRegistersDriveAsTheUploadTarget() = runTest {
+    fun successfulLinkDoesNotAutomaticallyBecomeTheUploadTarget() = runTest {
         val h = build()
 
         h.controller.linkDrive()
@@ -222,15 +222,31 @@ class AccountsControllerTest {
         val source = h.driveSources().single()
         assertEquals("google_drive_test", source.id)
         assertTrue(source.enabled)
-        assertTrue(source.isUploadTarget)
-        assertEquals(source.id, h.repository.uploadTarget()?.id)
+        // Linking must never silently turn on camera upload: a device that
+        // only meant to browse/test a cloud source should not start backing
+        // its camera roll up to someone's real account without being asked.
+        assertTrue(!source.isUploadTarget)
+        assertNull(h.repository.uploadTarget())
         assertEquals("rt", h.store.v["${source.id}.refreshToken"])
         assertEquals(LinkState.LINKED, h.account(source.id).state)
         assertTrue(h.controller.state.value.message!!.contains("connected", ignoreCase = true))
+        assertTrue(h.controller.state.value.message!!.contains("Use for photo sync"))
         // The account label comes from Drive's `about` response.
         assertTrue(source.displayName.contains("jud@example.com"), source.displayName)
         val config: DriveSourceConfig = Json.decodeFromString(source.configJson)
         assertEquals("jud@example.com", config.accountEmail)
+    }
+
+    @Test
+    fun explicitlyChoosingUploadTargetTurnsOnCameraUpload() = runTest {
+        val h = build()
+        h.controller.linkDrive()
+        val source = h.driveSources().single()
+
+        h.controller.setUploadTarget(source.id)
+
+        assertTrue(h.account(source.id).isUploadTarget)
+        assertEquals(source.id, h.repository.uploadTarget()?.id)
     }
 
     @Test
@@ -297,6 +313,7 @@ class AccountsControllerTest {
         val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_b"))
         h.controller.linkDrive()
         h.controller.linkDrive()
+        h.controller.setUploadTarget("google_drive_a")
         assertEquals("google_drive_a", h.repository.uploadTarget()?.id)
 
         h.controller.setUploadTarget("google_drive_b")
@@ -308,15 +325,23 @@ class AccountsControllerTest {
     }
 
     @Test
-    fun relinkingAfterUnlinkRestoresTheUploadTarget() = runTest {
+    fun relinkingAfterUnlinkDoesNotAutomaticallyRestoreTheUploadTarget() = runTest {
         val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_a"))
         h.controller.linkDrive()
+        h.controller.setUploadTarget("google_drive_a")
         h.controller.unlinkSource("google_drive_a")
+
         h.controller.linkDrive("google_drive_a")
 
+        // Disconnecting clears the flag, and re-linking must not quietly set
+        // it again — otherwise a device re-linked for an unrelated reason
+        // (e.g. to just browse a cloud) would restart backing its camera roll
+        // up without the user asking for it.
+        assertNull(h.repository.uploadTarget())
+        assertTrue(!h.account("google_drive_a").isUploadTarget)
+
+        h.controller.setUploadTarget("google_drive_a")
         assertEquals("google_drive_a", h.repository.uploadTarget()?.id)
-        assertTrue(h.account("google_drive_a").isUploadTarget)
-        assertEquals(1, h.repository.allSources().count { it.isUploadTarget })
     }
 
     @Test
@@ -352,17 +377,22 @@ class AccountsControllerTest {
     }
 
     @Test
-    fun linkingMegaCreatesItsOwnSourceAndUploadTarget() = runTest {
+    fun linkingMegaCreatesItsOwnSourceButNotAnUploadTargetYet() = runTest {
         val h = build()
         h.controller.linkMega("jud@mega.example", "secret")
 
         val source = h.repository.allSources().single { it.type == SourceType.MEGA }
         assertTrue(source.id.startsWith("mega_"))
-        assertTrue(source.isUploadTarget)
+        // Linking alone must never silently turn on camera upload.
+        assertTrue(!source.isUploadTarget)
+        assertNull(h.repository.uploadTarget())
         assertEquals(LinkState.LINKED, h.account(source.id).state)
         assertTrue(h.account(source.id).canUpload)
         assertTrue(h.megas.isLinked(source.id))
         assertTrue(h.controller.state.value.message!!.contains("MEGA"))
+
+        h.controller.setUploadTarget(source.id)
+        assertEquals(source.id, h.repository.uploadTarget()?.id)
     }
 
     @Test
@@ -370,6 +400,7 @@ class AccountsControllerTest {
         val h = build()
         h.controller.linkDrive()
         val driveId = h.driveSources().single().id
+        h.controller.setUploadTarget(driveId)
         h.controller.linkMega("jud@mega.example", "secret")
         val megaId = h.repository.allSources().single { it.type == SourceType.MEGA }.id
 

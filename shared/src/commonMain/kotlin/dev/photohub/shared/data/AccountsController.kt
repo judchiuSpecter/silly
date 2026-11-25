@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * Drives the sources screen: every configured source instance, plus linking,
- * disconnecting and picking which cloud receives camera uploads.
+ * disconnecting and picking the Local Photo Sync and Move destinations.
  *
  * The "not configured" state is modelled explicitly rather than treated as an
  * error. A fresh install has no OAuth client id, and that is a setup step the
@@ -54,12 +54,13 @@ class AccountsController(
         val type: SourceType,
         val displayName: String,
         val state: LinkState,
-        /** Whether this source can receive camera uploads (Drive/MEGA only). */
+        /** Whether this source can receive Local Photo Sync (Drive/MEGA only). */
         val canUpload: Boolean = false,
         val isUploadTarget: Boolean = false,
-        /** Whether this source can receive explicit Archive actions. */
-        val canArchive: Boolean = false,
-        val isArchiveTarget: Boolean = false,
+        /** Whether this source can receive a Move chosen at action time. */
+        val canReceiveMoves: Boolean = false,
+        /** Whether this source's items are shown in the timeline. */
+        val showInTimeline: Boolean = true,
         /** Account-wide storage quota, fetched only while this screen is open. */
         val quota: StorageQuota? = null,
         /** A link attempt (connect/reconnect) that failed; cleared by retrying the dialog. */
@@ -197,13 +198,12 @@ class AccountsController(
                 }
                 val config = (previousConfig ?: DriveSourceConfig()).copy(accountEmail = email)
 
-                // Take the upload slot when there is no target yet (first link,
-                // or a re-link after disconnecting the old target). Never steal
-                // it from a different cloud the user explicitly chose.
-                val currentTargetId = repository.uploadTarget()?.id
-                val makeTarget = existing?.isUploadTarget == true ||
-                    currentTargetId == null ||
-                    currentTargetId == id
+                // Linking never silently turns on Local Photo Sync — only a
+                // re-link of a source that was already the target stays one.
+                // Otherwise the user must choose "Use for photo sync"
+                // explicitly, or a test device could end up quietly backing
+                // its camera roll up to someone else's real account.
+                val makeTarget = existing?.isUploadTarget == true
 
                 repository.upsertCloudSource(
                     id = id,
@@ -213,8 +213,12 @@ class AccountsController(
                     enabled = true,
                     makeUploadTarget = makeTarget,
                 )
-                scheduler.setCameraUploadEnabled(true)
-                message = "$displayName connected. New photos will be copied to it."
+                if (makeTarget) scheduler.setCameraUploadEnabled(true)
+                message = if (makeTarget) {
+                    "$displayName connected. New photos will be copied to it."
+                } else {
+                    "$displayName connected. Choose \"Use for photo sync\" to back up this device's camera roll there."
+                }
                 publish()
             }
 
@@ -259,10 +263,9 @@ class AccountsController(
             }
             val config = (previousConfig ?: MegaSourceConfig()).copy(accountEmail = label)
 
-            val currentTargetId = repository.uploadTarget()?.id
-            val makeTarget = existing?.isUploadTarget == true ||
-                currentTargetId == null ||
-                currentTargetId == id
+            // See the matching comment in linkDrive(): only a re-link of a
+            // source that was already the target stays one.
+            val makeTarget = existing?.isUploadTarget == true
             repository.upsertCloudSource(
                 id = id,
                 type = SourceType.MEGA,
@@ -271,8 +274,12 @@ class AccountsController(
                 enabled = true,
                 makeUploadTarget = makeTarget,
             )
-            scheduler.setCameraUploadEnabled(true)
-            message = "$displayName connected. New photos will be copied to it."
+            if (makeTarget) scheduler.setCameraUploadEnabled(true)
+            message = if (makeTarget) {
+                "$displayName connected. New photos will be copied to it."
+            } else {
+                "$displayName connected. Choose \"Use for photo sync\" to back up this device's camera roll there."
+            }
         } else {
             linkingId = null
             errors[id] = outcome.exceptionOrNull()?.message ?: "Could not connect to MEGA."
@@ -349,7 +356,7 @@ class AccountsController(
             enabled = false,
         )
         if (source.isUploadTarget) repository.clearUploadTarget(id)
-        if (source.isArchiveTarget) repository.clearArchiveTarget(id)
+        if (source.isMoveTarget) repository.clearMoveTarget(id)
         updateScheduler()
 
         message = "${source.displayName} disconnected."
@@ -357,7 +364,7 @@ class AccountsController(
         publish()
     }
 
-    /** Makes this cloud the destination for new camera photos. Exactly one may be. */
+    /** Makes this cloud the destination for Local Photo Sync. Exactly one may be. */
     fun setUploadTarget(id: String) {
         val source = repository.sourceById(id) ?: return
         if (source.type !in setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA) || !source.enabled) return
@@ -371,18 +378,20 @@ class AccountsController(
             makeUploadTarget = true,
         )
         scheduler.setCameraUploadEnabled(true)
-        message = "Camera uploads now go to ${source.displayName}."
+        message = "Local Photo Sync now writes to ${source.displayName}."
         publish()
     }
 
-    /** Makes this source the destination of explicit Archive actions. Exactly one may be. */
-    fun setArchiveTarget(id: String) {
-        val source = repository.sourceById(id) ?: return
-        if (source.type !in ARCHIVE_TARGET_TYPES || !source.enabled) return
-        repository.setArchiveTarget(id)
-        message = "Archived photos now go to ${source.displayName}."
+    /** Shows or hides one source's photos in the timeline. */
+    fun setSourceVisible(id: String, show: Boolean) {
+        if (repository.sourceById(id) == null) return
+        repository.setSourceVisible(id, show)
+        message = "${sourceDisplay(id)} ${if (show) "shown" else "hidden"} in the timeline."
         publish()
     }
+
+    private fun sourceDisplay(id: String): String =
+        repository.sourceById(id)?.displayName ?: id
 
     /** Clears a one-shot message or error after the UI has shown it. */
     fun consumeMessage() {
@@ -425,8 +434,8 @@ class AccountsController(
                 },
                 canUpload = source.type == SourceType.GOOGLE_DRIVE || source.type == SourceType.MEGA,
                 isUploadTarget = source.isUploadTarget,
-                canArchive = source.enabled && source.type in ARCHIVE_TARGET_TYPES,
-                isArchiveTarget = source.isArchiveTarget,
+                canReceiveMoves = source.enabled && source.type in MOVE_DESTINATION_TYPES,
+                showInTimeline = source.showInTimeline,
                 quota = quotas[source.id],
                 error = errors[source.id],
                 syncError = source.lastSyncError,
@@ -470,8 +479,9 @@ class AccountsController(
         private val SUPPORTED_TYPES =
             setOf(SourceType.LOCAL, SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)
 
-        /** Sources with a write/delete implementation, so they can be archive targets. */
-        private val ARCHIVE_TARGET_TYPES = SUPPORTED_TYPES
+        /** Sources with a write implementation, offered as per-move destinations. */
+        private val MOVE_DESTINATION_TYPES =
+            setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)
 
         /**
          * Instance ids must be unique per account. The legacy single-account id is

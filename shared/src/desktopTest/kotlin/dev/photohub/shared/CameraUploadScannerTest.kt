@@ -5,6 +5,7 @@ import dev.photohub.shared.data.CameraUploadScanner
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.data.UploadManager
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files

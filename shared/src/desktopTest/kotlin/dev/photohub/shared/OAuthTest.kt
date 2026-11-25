@@ -109,7 +109,9 @@ class GoogleOAuthClientTest {
         // Without offline access Google returns no refresh token and background
         // upload breaks as soon as the access token expires.
         assertTrue(url.contains("access_type=offline"))
-        assertTrue(url.contains("prompt=consent"))
+        // select_account forces the chooser so a second Drive instance does not
+        // silently reuse whichever account the browser is already signed into.
+        assertTrue(url.contains("prompt=select_account%20consent"), url)
         // The redirect URI must be percent-encoded, not raw.
         assertTrue(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A1234"), url)
         assertTrue(url.contains("scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.file"), url)

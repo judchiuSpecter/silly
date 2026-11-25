@@ -1,6 +1,7 @@
 package dev.photohub.shared.data
 
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.source.MediaSource
 import kotlin.time.Clock
 

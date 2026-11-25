@@ -4,8 +4,9 @@ CREATE TABLE Source (
     type          TEXT NOT NULL,           -- LOCAL, GOOGLE_DRIVE, MEGA, ONEDRIVE, TAKEOUT, NAS_ARCHIVE
     displayName   TEXT NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 1,
-    isUploadTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may be the camera-upload target
-    isArchiveTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may receive archived media
+    isUploadTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may receive Local Photo Sync
+    isArchiveTarget INTEGER NOT NULL DEFAULT 0, -- legacy column name: the one Move destination
+    isVisible      INTEGER NOT NULL DEFAULT 1, -- user can hide a source from the timeline
     -- Opaque, source-specific config (JSON). Credentials are stored separately/encrypted.
     configJson    TEXT NOT NULL DEFAULT '{}',
     lastSyncedAt  INTEGER,                  -- epoch millis of last successful sync, null if never
@@ -29,21 +30,28 @@ SELECT * FROM Source WHERE id = ?;
 selectUploadTarget:
 SELECT * FROM Source WHERE isUploadTarget = 1 LIMIT 1;
 
-selectArchiveTarget:
+selectMoveTarget:
 SELECT * FROM Source WHERE isArchiveTarget = 1 LIMIT 1;
 
-upsert:
-INSERT INTO Source(id, type, displayName, enabled, isUploadTarget, configJson, lastSyncedAt, sortOrder, lastSyncError)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    type = excluded.type,
-    displayName = excluded.displayName,
-    enabled = excluded.enabled,
-    isUploadTarget = excluded.isUploadTarget,
-    configJson = excluded.configJson,
-    lastSyncedAt = excluded.lastSyncedAt,
-    sortOrder = excluded.sortOrder,
-    lastSyncError = excluded.lastSyncError;
+-- Split into insert + update rather than SQLite's `ON CONFLICT ... DO UPDATE`:
+-- some Android devices ship an SQLite build old enough to reject upsert syntax
+-- outright. `MediaRepository.upsertSource` runs both in a transaction so
+-- callers still see one logical upsert.
+insertIgnoringExisting:
+INSERT OR IGNORE INTO Source(id, type, displayName, enabled, isUploadTarget, configJson, lastSyncedAt, sortOrder, lastSyncError)
+VALUES (:id, :type, :displayName, :enabled, :isUploadTarget, :configJson, :lastSyncedAt, :sortOrder, :lastSyncError);
+
+updateExisting:
+UPDATE Source SET
+    type = :type,
+    displayName = :displayName,
+    enabled = :enabled,
+    isUploadTarget = :isUploadTarget,
+    configJson = :configJson,
+    lastSyncedAt = :lastSyncedAt,
+    sortOrder = :sortOrder,
+    lastSyncError = :lastSyncError
+WHERE id = :id;
 
 -- Called after every sync attempt: null clears a previous alert on success.
 setSyncError:
@@ -57,16 +65,21 @@ UPDATE Source SET isUploadTarget = 0;
 clearUploadTarget:
 UPDATE Source SET isUploadTarget = 0 WHERE id = ?;
 
--- Same single-slot model for archives. Kept out of `upsert` so re-linking an
--- account cannot silently move the archive target.
-clearAllArchiveTargets:
+-- Same single-slot model for the Move destination. Kept out of `upsert` so
+-- re-linking an account cannot silently move it. The SQL column keeps its old
+-- name so existing installs need no destructive migration.
+clearAllMoveTargets:
 UPDATE Source SET isArchiveTarget = 0;
 
-setArchiveTarget:
+setMoveTarget:
 UPDATE Source SET isArchiveTarget = 1 WHERE id = ?;
 
-clearArchiveTarget:
+clearMoveTarget:
 UPDATE Source SET isArchiveTarget = 0 WHERE id = ?;
+
+-- Per-source timeline visibility. Not part of `upsert`, so re-linking preserves it.
+setSourceVisible:
+UPDATE Source SET isVisible = ? WHERE id = ?;
 
 setLastSynced:
 UPDATE Source SET lastSyncedAt = ? WHERE id = ?;

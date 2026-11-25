@@ -17,13 +17,13 @@ import okio.Path.Companion.toPath
 import java.util.UUID
 
 /**
- * Explicit, user-triggered Delete/Archive actions for timeline items.
+ * Explicit, user-triggered Delete/Move actions for timeline items.
  *
  * These are deliberately separate from sync: nothing here runs automatically.
- * Delete removes the item from its owning source only. Archive first copies the
- * original to the one designated archive target, verifies the bytes, and only
- * then deletes the source copy and the local index row. Any failed step keeps
- * the original and the index row, so a retry is always safe.
+ * Delete removes the item from its owning source only. Move first copies the
+ * original to the destination chosen for this operation, verifies the bytes, and
+ * only then deletes the source copy and the local index row. Any failed step
+ * keeps the original and the index row, so a retry is always safe.
  */
 class PhotoActionsController(
     private val repository: MediaRepository,
@@ -54,17 +54,6 @@ class PhotoActionsController(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
-
-    /**
-     * Whether Archive is meaningful for this item. Actual reachability is checked
-     * when the action runs; this only covers the decisions the UI can make from
-     * cached data (is there a target, and is the photo already there?).
-     */
-    fun canArchive(item: MediaItem): Boolean {
-        val target = repository.archiveTarget() ?: return false
-        if (item.sourceId == target.id) return false
-        return repository.sourceById(item.sourceId)?.enabled == true
-    }
 
     fun clearMessage() {
         lastMessage = null
@@ -113,19 +102,23 @@ class PhotoActionsController(
     }
 
     /**
-     * Moves items to the designated archive target. Requires Wi-Fi on Android:
-     * this copies full originals and deletes source copies, same as the bulk archiver.
+     * Moves items to the destination chosen for this operation. Requires Wi-Fi
+     * on Android: copies full originals and deletes source copies only after
+     * verification.
      */
-    suspend fun archive(items: List<MediaItem>): Result<Outcome> {
+    suspend fun move(items: List<MediaItem>, destinationId: String): Result<Outcome> {
         if (_state.value.running) return alreadyRunning()
-        if (!networkAllowed()) return fail("Connect to Wi-Fi before archiving.")
+        if (!networkAllowed()) return fail("Connect to Wi-Fi before moving.")
 
-        val targetConfig = repository.archiveTarget()
-            ?: return fail("Choose an archive target in Settings → Sources first.")
+        val targetConfig = repository.sourceById(destinationId)
+            ?: return fail("That move destination is no longer available.")
+        if (!targetConfig.enabled || items.any { it.sourceId == destinationId }) {
+            return fail("Choose a destination other than the source of these items.")
+        }
         val targetSource = sources.create(targetConfig)
-            ?: return fail("The archive target is not available.")
+            ?: return fail("${targetConfig.displayName} is not available right now.")
         if (!targetSource.canUpload) {
-            return fail("${targetConfig.displayName} cannot receive archived photos.")
+            return fail("${targetConfig.displayName} cannot receive moved photos.")
         }
 
         lastMessage = null
@@ -143,11 +136,11 @@ class PhotoActionsController(
                 val source = sources.create(sourceConfig)
                 if (source == null || !source.canDelete) {
                     outcome = outcome.copy(failed = outcome.failed + 1)
-                    publish(outcome, "${item.displayName}: source cannot be archived from")
+                    publish(outcome, "${item.displayName}: source cannot be moved from")
                     continue
                 }
 
-                publish(outcome, "Archiving ${item.displayName}…")
+                publish(outcome, "Moving ${item.displayName} to ${targetConfig.displayName}…")
                 val localFile = workDir / "${UUID.randomUUID()}-${ArchivePaths.fileName(item.displayName, item.id)}"
                 val verifyFile = workDir / "${UUID.randomUUID()}-verify.bin"
 
@@ -178,7 +171,7 @@ class PhotoActionsController(
                             val verified = targetConfig.type == SourceType.NAS_ARCHIVE ||
                                 verifyCopy(targetSource, uploaded.getOrThrow(), working, verifyFile)
                             if (!verified) {
-                                publish(outcome, "Archive copy of ${item.displayName} failed verification; original kept.")
+                                publish(outcome, "Moved copy of ${item.displayName} failed verification; original kept.")
                                 runCatching { targetSource.delete(uploaded.getOrThrow()) }
                                 false
                             } else {
@@ -220,7 +213,7 @@ class PhotoActionsController(
         return Result.success(outcome)
     }
 
-    /** Re-downloads the archived copy and compares SHA-256 with the local original. */
+    /** Re-downloads the moved copy and compares SHA-256 with the local original. */
     private suspend fun verifyCopy(
         target: MediaSource,
         uploaded: RemoteMedia,

@@ -3,10 +3,12 @@ package dev.photohub.shared
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.SourceType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class MediaRepositoryTest {
 
@@ -61,24 +63,24 @@ class MediaRepositoryTest {
     }
 
     @Test
-    fun onlyOneArchiveTargetAllowed() {
+    fun onlyOneMoveTargetAllowed() {
         val repo = MediaRepository(newDb())
         repo.upsertCloudSource("drive_a", SourceType.GOOGLE_DRIVE, "Drive A")
         repo.upsertCloudSource("drive_b", SourceType.GOOGLE_DRIVE, "Drive B")
 
-        repo.setArchiveTarget("drive_a")
-        repo.setArchiveTarget("drive_b")
+        repo.setMoveTarget("drive_a")
+        repo.setMoveTarget("drive_b")
 
-        assertEquals("drive_b", repo.archiveTarget()?.id)
+        assertEquals("drive_b", repo.moveTarget()?.id)
         assertEquals(
             1,
-            repo.allSources().count { it.isArchiveTarget },
-            "moving the slot must clear the previous target",
+            repo.allSources().count { it.isMoveTarget },
+            "moving the slot must clear the previous destination",
         )
     }
 
     @Test
-    fun anExistingNasIsAdoptedAsArchiveTarget() {
+    fun startupDoesNotAssignADefaultMoveTarget() {
         val repo = MediaRepository(newDb())
         repo.upsertCloudSource(
             id = "nas_legacy",
@@ -86,11 +88,19 @@ class MediaRepositoryTest {
             displayName = "NAS",
         )
 
-        // Existing installs had no archive-target column; startup must not leave
-        // Archive unusable until the user finds the setting.
         repo.ensureLocalSource()
 
-        assertEquals("nas_legacy", repo.archiveTarget()?.id)
+        assertNull(repo.moveTarget(), "Move destinations are chosen per operation")
+    }
+
+    @Test
+    fun sourceVisibilityIsPersisted() {
+        val repo = MediaRepository(newDb())
+        repo.upsertCloudSource("drive_a", SourceType.GOOGLE_DRIVE, "Drive A")
+
+        repo.setSourceVisible("drive_a", false)
+
+        assertEquals(false, repo.allSources().single { it.id == "drive_a" }.showInTimeline)
     }
 
     @Test

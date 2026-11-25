@@ -58,23 +58,30 @@ FROM MediaItem
 JOIN Source ON Source.id = MediaItem.sourceId
 WHERE Source.enabled = 1;
 
-upsert:
-INSERT INTO MediaItem(
+-- Split into insert + update rather than SQLite's `ON CONFLICT ... DO UPDATE`:
+-- some Android devices ship an SQLite build old enough to reject upsert syntax
+-- outright. `MediaIndexer.upsertItem` runs both in a transaction so callers
+-- still see one logical upsert.
+insertIgnoringExisting:
+INSERT OR IGNORE INTO MediaItem(
     id, sourceId, remoteId, displayName, mimeType, isVideo, sizeBytes,
     width, height, dateTaken, contentHash, thumbCachePath, originalCachePath,
     syncState, remoteThumbUrl, indexedAt
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    displayName = excluded.displayName,
-    mimeType = excluded.mimeType,
-    isVideo = excluded.isVideo,
-    sizeBytes = excluded.sizeBytes,
-    width = excluded.width,
-    height = excluded.height,
-    dateTaken = excluded.dateTaken,
-    contentHash = coalesce(excluded.contentHash, MediaItem.contentHash),
-    remoteThumbUrl = excluded.remoteThumbUrl,
-    indexedAt = excluded.indexedAt;
+) VALUES (:id, :sourceId, :remoteId, :displayName, :mimeType, :isVideo, :sizeBytes, :width, :height, :dateTaken, :contentHash, :thumbCachePath, :originalCachePath, :syncState, :remoteThumbUrl, :indexedAt);
+
+updateExisting:
+UPDATE MediaItem SET
+    displayName = :displayName,
+    mimeType = :mimeType,
+    isVideo = :isVideo,
+    sizeBytes = :sizeBytes,
+    width = :width,
+    height = :height,
+    dateTaken = :dateTaken,
+    contentHash = coalesce(:contentHash, contentHash),
+    remoteThumbUrl = :remoteThumbUrl,
+    indexedAt = :indexedAt
+WHERE id = :id;
 
 -- Items still needing a thumbnail, newest first so the visible top of the
 -- timeline sharpens before older photos.

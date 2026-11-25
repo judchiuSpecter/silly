@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.photohub.shared.data.MediaInfoController
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.PhotoMetadata
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test

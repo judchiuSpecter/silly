@@ -1,7 +1,6 @@
 package dev.photohub.shared.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -10,7 +9,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +34,7 @@ import dev.photohub.shared.db.MediaItem
  *
  * The top-left checkbox appears on desktop hover, and stays visible once the
  * user has entered multiselect mode (the only way to select on touch devices).
- * The top-right "i" is opt-in via Settings; the viewer always has its own.
+ * Info lives in the fullscreen viewer, not on the tiles.
  */
 @Composable
 fun MediaCell(
@@ -44,9 +42,7 @@ fun MediaCell(
     modifier: Modifier = Modifier,
     selectionMode: Boolean = false,
     selected: Boolean = false,
-    showInfoButton: Boolean = false,
     onToggleSelection: () -> Unit = {},
-    onInfoClick: () -> Unit = {},
 ) {
     val hoverInteraction = remember { MutableInteractionSource() }
     val hovered by hoverInteraction.collectIsHoveredAsState()
@@ -69,26 +65,6 @@ fun MediaCell(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-            }
-
-            if (showInfoButton) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(24.dp)
-                        .clickable { onInfoClick() },
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "i",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
             }
 
             if (showCheckbox) {

@@ -3,6 +3,8 @@ package dev.photohub.shared.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,17 +41,9 @@ import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.AccountsController.LinkState
 import dev.photohub.shared.data.AccountsController.SourceAccount
-import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.ThemeMode
 import dev.photohub.shared.model.SourceType
 import kotlinx.coroutines.launch
-import kotlin.time.Clock as TimeClock
-import kotlinx.datetime.DatePeriod
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.atStartOfDayIn
-import kotlinx.datetime.minus
-import kotlinx.datetime.toLocalDateTime
 
 /**
  * Sources screen: every configured source instance, an "add source" picker, and
@@ -66,11 +60,7 @@ fun AccountsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     confirmDelete: Boolean = true,
     onConfirmDeleteChange: (Boolean) -> Unit = {},
-    showTileInfo: Boolean = true,
-    onShowTileInfoChange: (Boolean) -> Unit = {},
     onRetrySource: (String) -> Unit,
-    archiver: ArchiveController? = null,
-    onArchiveComplete: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
@@ -81,8 +71,6 @@ fun AccountsScreen(
     var showMegaDialogForNew by remember { mutableStateOf(false) }
     var showNasDialog by remember { mutableStateOf(false) }
     var nasTargetId by remember { mutableStateOf<String?>(null) }
-    var showArchiveDialog by remember { mutableStateOf(false) }
-    var archiveCutoff by remember { mutableStateOf("") }
 
     // Storage is the source of truth, and it can change while this screen is
     // backgrounded (a link completing, tokens being cleared), so re-read on show.
@@ -101,15 +89,14 @@ fun AccountsScreen(
 
         Text(
             "Every connected source appears in one timeline. One source receives " +
-                "new camera photos; a separate source receives photos you archive. " +
-                "Deletes only happen when you choose them.",
+                "Local Photo Sync from this device; moving asks where to send each " +
+                "item. Use Show on a source to hide it from the timeline.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         TargetsCard(
-            uploadTarget = state.sources.firstOrNull { it.isUploadTarget }?.displayName,
-            archiveTarget = state.sources.firstOrNull { it.isArchiveTarget }?.displayName,
+            syncTarget = state.sources.firstOrNull { it.isUploadTarget }?.displayName,
         )
 
         if (!state.oauthConfigured) {
@@ -134,7 +121,7 @@ fun AccountsScreen(
                 },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
-                onSetArchiveTarget = { controller.setArchiveTarget(source.id) },
+                onSetVisible = { show -> controller.setSourceVisible(source.id, show) },
                 onUploadNow = controller::uploadNow,
                 onRetry = { onRetrySource(source.id) },
             )
@@ -157,25 +144,10 @@ fun AccountsScreen(
             }
         }
 
-        if (archiver != null) {
-            ArchiveCard(
-                controller = archiver,
-                onOpen = {
-                    archiveCutoff = TimeClock.System.now()
-                        .toLocalDateTime(TimeZone.currentSystemDefault()).date
-                        .minus(DatePeriod(days = 90)).toString()
-                    showArchiveDialog = true
-                },
-                onRefreshTimeline = onArchiveComplete,
-            )
-        }
-
         AppearanceCard(themeMode = themeMode, onChange = onThemeModeChange)
         ActionsCard(
             confirmDelete = confirmDelete,
             onConfirmDeleteChange = onConfirmDeleteChange,
-            showTileInfo = showTileInfo,
-            onShowTileInfoChange = onShowTileInfoChange,
         )
     }
 
@@ -237,21 +209,9 @@ fun AccountsScreen(
         )
     }
 
-    if (showArchiveDialog && archiver != null) {
-        ArchiveDialog(
-            initialCutoff = archiveCutoff,
-            onDismiss = { showArchiveDialog = false },
-            onSubmit = { cutoffEpochMs ->
-                showArchiveDialog = false
-                scope.launch {
-                    archiver.run(cutoffEpochMs)
-                    onArchiveComplete()
-                }
-            },
-        )
-    }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceCard(
     account: SourceAccount,
@@ -260,36 +220,44 @@ private fun SourceCard(
     onLink: () -> Unit,
     onUnlink: () -> Unit,
     onSetTarget: () -> Unit,
-    onSetArchiveTarget: () -> Unit,
+    onSetVisible: (Boolean) -> Unit,
     onUploadNow: () -> Unit,
     onRetry: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(account.displayName, style = MaterialTheme.typography.titleMedium)
-                if (account.isUploadTarget) {
-                    Text(
-                        "  · upload target",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(account.displayName, style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (account.isUploadTarget) {
+                            Text(
+                                "· Local Photo Sync",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        if (account.syncError != null) {
+                            // A plain glyph rather than a material icon: the icon font
+                            // extension is not pulled in and this is the one place in
+                            // the app that would need it.
+                            Text(
+                                "  \u26A0",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                 }
-                if (account.isArchiveTarget) {
-                    Text(
-                        "  · archive target",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (account.syncError != null) {
-                    // A plain glyph rather than a material icon: the icon font
-                    // extension is not pulled in and this is the one place in
-                    // the app that would need it.
-                    Text(
-                        "  \u26A0",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.error,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Show", style = MaterialTheme.typography.labelMedium)
+                    Switch(
+                        checked = account.showInTimeline,
+                        onCheckedChange = onSetVisible,
                     )
                 }
             }
@@ -301,7 +269,7 @@ private fun SourceCard(
                     SourceType.MEGA -> "MEGA"
                     SourceType.ONEDRIVE -> "OneDrive"
                     SourceType.TAKEOUT -> "Google Photos Takeout"
-                    SourceType.NAS_ARCHIVE -> "NAS archive"
+                    SourceType.NAS_ARCHIVE -> "NAS"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -314,9 +282,6 @@ private fun SourceCard(
                             "You can disable it only by revoking Silly's photo permission.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    if (account.canArchive && !account.isArchiveTarget) {
-                        OutlinedButton(onClick = onSetArchiveTarget) { Text("Use for archives") }
-                    }
                 }
 
                 account.state == LinkState.UNSUPPORTED -> {
@@ -371,9 +336,9 @@ private fun SourceCard(
                     Text(
                         if (account.type == SourceType.NAS_ARCHIVE) {
                             "Connected. Queries are read-only; it only receives copies when " +
-                                "you make it the archive target."
+                                "you choose it for a move."
                         } else {
-                            "Connected. New photos are copied into PhotoHub/YYYY/MM."
+                            "Connected. Synced photos are copied into your configured folder."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -415,19 +380,21 @@ private fun SourceCard(
                             }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         if (account.canUpload) {
                             if (!account.isUploadTarget) {
-                                OutlinedButton(onClick = onSetTarget) { Text("Use for uploads") }
+                                OutlinedButton(onClick = onSetTarget) {
+                                    Text("Use for photo sync")
+                                }
                             } else {
-                                // Uploads otherwise wait for the periodic pass, which
-                                // needs Wi-Fi and a charged battery; this is the escape
-                                // hatch for "send it now".
-                                Button(onClick = onUploadNow) { Text("Upload now") }
+                                // Sync otherwise waits for the periodic pass, which
+                                // needs Wi-Fi and a charged battery; this is the
+                                // escape hatch for "sync it now".
+                                Button(onClick = onUploadNow) { Text("Sync now") }
                             }
-                        }
-                        if (account.canArchive && !account.isArchiveTarget) {
-                            OutlinedButton(onClick = onSetArchiveTarget) { Text("Use for archives") }
                         }
                         OutlinedButton(onClick = onUnlink) { Text("Disconnect") }
                     }
@@ -454,7 +421,7 @@ private fun SourceCard(
                     color = MaterialTheme.colorScheme.error,
                 )
                 Text(
-                    "PhotoHub stopped trying automatically so it doesn't keep hitting " +
+                    "Silly stopped trying automatically so it doesn't keep hitting " +
                         "the same error. Retry once the problem is fixed.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -467,17 +434,18 @@ private fun SourceCard(
 
 /** Two single-slot roles, always visible so they cannot be confused. */
 @Composable
-private fun TargetsCard(uploadTarget: String?, archiveTarget: String?) {
+private fun TargetsCard(syncTarget: String?) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Current targets", style = MaterialTheme.typography.titleSmall)
+            Text("Current target", style = MaterialTheme.typography.titleSmall)
             Text(
-                "Camera uploads → ${uploadTarget ?: "not set"}",
+                "Local Photo Sync → ${syncTarget ?: "not set"}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "Archives → ${archiveTarget ?: "not set"}",
-                style = MaterialTheme.typography.bodyMedium,
+                "Move asks where to send each item.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -527,8 +495,8 @@ private fun AddSourceDialog(
                             {},
                         )
                         SourceType.NAS_ARCHIVE -> SourceChoice(
-                            "NAS archive",
-                            "Connect over SFTP and read photos already archived there.",
+                            "NAS",
+                            "Connect over SFTP and read photos stored there.",
                             true,
                             onNas,
                         )
@@ -642,12 +610,12 @@ private fun LinkNasDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Connect NAS archive") },
+        title = { Text("Connect NAS") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Connects over SFTP (port 22). Queries are read-only; PhotoHub writes " +
-                        "or deletes here only if you make it the archive target.",
+                    "Connects over SFTP (port 22). Queries are read-only; Silly writes " +
+                        "or deletes here only if you choose it for a move.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -711,120 +679,13 @@ private data class SourceChoice(
     val onClick: () -> Unit,
 )
 
-/** Manual, destructive-by-design cloud → NAS move. Never runs in the background. */
-@Composable
-private fun ArchiveCard(
-    controller: ArchiveController,
-    onOpen: () -> Unit,
-    onRefreshTimeline: () -> Unit,
-) {
-    val state by controller.state.collectAsState()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Archive old photos to NAS", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Copies items older than a chosen date from every connected cloud to the " +
-                    "current archive target (which must be a NAS), verifies each copy " +
-                    "byte-for-byte, then removes the cloud original. Requires Wi-Fi on Android.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(
-                onClick = onOpen,
-                enabled = !state.running && controller.canArchive(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (state.running) "Archiving…" else "Choose cutoff date…")
-            }
-            if (state.running) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
-            if (!state.running && (state.processed > 0 || state.failed > 0 || state.skipped > 0)) {
-                Text(
-                    "${state.processed} checked · ${state.archived} archived · " +
-                        "${state.failed} failed · ${state.skipped} skipped",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                TextButton(onClick = onRefreshTimeline) { Text("Refresh timeline") }
-            }
-            state.message?.let { message ->
-                Text(
-                    message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (state.failed > 0) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ArchiveDialog(
-    initialCutoff: String,
-    onDismiss: () -> Unit,
-    onSubmit: (Long) -> Unit,
-) {
-    var cutoff by remember { mutableStateOf(initialCutoff) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    fun submit() {
-        val date = runCatching { LocalDate.parse(cutoff.trim()) }.getOrNull()
-        if (date == null) {
-            error = "Enter a date as YYYY-MM-DD."
-            return
-        }
-        onSubmit(date.atStartOfDayIn(TimeZone.currentSystemDefault()).toEpochMilliseconds())
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Archive to NAS") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Photos taken before this date will be copied to the NAS. The cloud " +
-                        "copy is deleted only after the NAS copy is verified.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedTextField(
-                    value = cutoff,
-                    onValueChange = { cutoff = it; error = null },
-                    label = { Text("Cutoff date (YYYY-MM-DD)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (days in listOf(90, 180, 365)) {
-                        OutlinedButton(
-                            onClick = {
-                                cutoff = TimeClock.System.now()
-                                    .toLocalDateTime(TimeZone.currentSystemDefault()).date
-                                    .minus(DatePeriod(days = days)).toString()
-                                error = null
-                            },
-                        ) {
-                            Text("${days}d")
-                        }
-                    }
-                }
-                error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { submit() }) { Text("Start") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
 @Composable
 private fun SetupNeededCard(setupPath: String) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Google sign-in setup", style = MaterialTheme.typography.titleMedium)
             Text(
-                "PhotoHub does not ship a Google OAuth client ID — " +
+                "Silly does not ship a Google OAuth client ID — " +
                     "create one (Drive API, \"Desktop app\", scope drive.file) and save it as:",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -839,7 +700,7 @@ private fun SetupNeededCard(setupPath: String) {
                 fontFamily = FontFamily.Monospace,
             )
             Text(
-                "Restart PhotoHub after creating the file.",
+                "Restart Silly after creating the file.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -879,13 +740,11 @@ private fun AppearanceCard(
     }
 }
 
-/** Action and tile preferences, kept next to the other plain settings. */
+/** The one action preference that is not tied to a source. */
 @Composable
 private fun ActionsCard(
     confirmDelete: Boolean,
     onConfirmDeleteChange: (Boolean) -> Unit,
-    showTileInfo: Boolean,
-    onShowTileInfoChange: (Boolean) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -904,21 +763,6 @@ private fun ActionsCard(
                     )
                 }
                 Switch(checked = confirmDelete, onCheckedChange = onConfirmDeleteChange)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(Modifier.padding(end = 8.dp)) {
-                    Text("Info button on tiles", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Turns off the small i on each tile. The viewer keeps its own.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = showTileInfo, onCheckedChange = onShowTileInfoChange)
             }
         }
     }

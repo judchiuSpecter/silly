@@ -39,6 +39,13 @@ fun migrateSchema(driver: SqlDriver) {
     runCatching {
         driver.execute(null, "ALTER TABLE MediaItem ADD COLUMN metadataJson TEXT", 0)
     }
+    runCatching {
+        driver.execute(
+            null,
+            "ALTER TABLE Source ADD COLUMN isVisible INTEGER NOT NULL DEFAULT 1",
+            0,
+        )
+    }
 }
 
 /**
