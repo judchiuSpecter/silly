@@ -279,7 +279,23 @@ class MediaStoreSource(
 
     /** Uses Android's own consent dialog on modern versions before deleting. */
     override suspend fun delete(item: RemoteMedia): Result<Unit> =
-        AndroidPlatform.requestMediaDelete(listOf(contentUri(item)))
+        AndroidPlatform.requestMediaDelete(listOf(deleteUri(item)))
+
+    /**
+     * MediaStore.createDeleteRequest rejects the generic Files URI with
+     * "All requested items must be Media items". It only accepts a concrete
+     * images/video collection URI when the caller does not own the item.
+     */
+    private fun deleteUri(item: RemoteMedia): Uri {
+        val id = item.remoteId.toLongOrNull()
+            ?: error("Local media id ${item.remoteId} is not a MediaStore id")
+        val collection = if (item.isVideo) {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+        return ContentUris.withAppendedId(collection, id)
+    }
 
     private fun contentUri(item: RemoteMedia): Uri =
         item.thumbnailUrl?.takeIf { it.startsWith("content://") }?.let(Uri::parse)
