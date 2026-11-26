@@ -476,7 +476,8 @@ private fun SourceCard(
             text = {
                 Text(
                     "This forgets the saved sign-in and removes this source's indexed " +
-                        "photos from Silly. Nothing is deleted from the cloud or NAS.",
+                        "photos from Silly. Cached thumbnails are kept so re-adding is " +
+                        "faster. Nothing is deleted from the cloud or NAS.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

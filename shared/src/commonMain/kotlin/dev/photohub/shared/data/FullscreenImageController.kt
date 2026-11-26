@@ -28,6 +28,7 @@ class FullscreenImageController(
     /** Avoids opening dozens of SFTP sessions when a grid of remote cells appears. */
     private val thumbnailLock = Mutex()
     private val fetchingThumbnails = mutableSetOf<String>()
+    private val onDemandCounts = mutableMapOf<String, Int>()
 
     /**
      * Downloads the thumbnail for one visible remote cell and links it into the
@@ -35,9 +36,17 @@ class FullscreenImageController(
      */
     suspend fun ensureThumbnail(item: MediaItem): String? {
         val claimed = thumbnailLock.withLock {
-            if (item.id in fetchingThumbnails) false else {
-                fetchingThumbnails += item.id
-                true
+            if (item.id !in fetchingThumbnails) {
+                val used = onDemandCounts[item.sourceId] ?: 0
+                if (used < ON_DEMAND_THUMB_BUDGET) {
+                    fetchingThumbnails += item.id
+                    onDemandCounts[item.sourceId] = used + 1
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             }
         }
         if (!claimed) return null
@@ -94,6 +103,9 @@ class FullscreenImageController(
 
     private companion object {
         const val ORIGINALS_DIR = "originals"
+
+        /** Max remote cells one screen session may try to fetch on demand. */
+        const val ON_DEMAND_THUMB_BUDGET = 24
 
         /** Sources whose thumbnail is too small to view full-screen as-is. */
         val REMOTE_ORIGINAL_TYPES = setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)

@@ -27,8 +27,8 @@ import okio.Path
 class ThumbnailStore(private val db: PhotoHubDatabase) {
 
     companion object {
-        /** How many downloaded thumbnails to build per refresh. */
-        const val REMOTE_THUMB_LIMIT = 120
+        /** How many downloaded thumbnails to build per refresh, per source. */
+        const val REMOTE_THUMB_LIMIT = 24
 
         /** Bound local rendering too, so a huge library cannot peg the CPU. */
         const val LOCAL_THUMB_LIMIT = 300

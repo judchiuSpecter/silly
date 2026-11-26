@@ -9,7 +9,6 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -158,7 +157,7 @@ class MediaRepositoryTest {
     }
 
     @Test
-    fun deletingSourceRemovesOnlyUnreferencedCacheFiles() {
+    fun deletingSourceKeepsCacheFilesSoReaddingIsCheap() {
         val dir = Files.createTempDirectory("source-cleanup").toFile()
         val sharedThumb = File(dir, "shared-thumb.jpg").apply { writeText("thumb") }
         val onlyOriginal = File(dir, "original.bin").apply { writeText("original") }
@@ -182,7 +181,7 @@ class MediaRepositoryTest {
 
         assertNull(repo.itemById("nas_1:photo"))
         assertNotNull(repo.itemById("nas_2:photo"))
-        assertTrue(sharedThumb.isFile, "a thumbnail still used by nas_2 must survive")
-        assertFalse(onlyOriginal.isFile, "an unreferenced original must be removed")
+        assertTrue(sharedThumb.isFile, "cached thumbnails survive so a re-add can reuse them")
+        assertTrue(onlyOriginal.isFile, "cached originals are kept too; only the index is removed")
     }
 }

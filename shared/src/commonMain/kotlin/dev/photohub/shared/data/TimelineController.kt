@@ -153,7 +153,15 @@ class TimelineController(
             val source = sources.create(config) ?: return@runCatching
             indexer.index(source).getOrThrow()
             if (config.type in REMOTE_THUMB_TYPES) {
-                thumbnails.fetchRemote(source, onProgress = { completed ->
+                // NAS has no server-side thumbnails here: each miss falls back to
+                // a full original download. Keep each pass tiny so one slow file
+                // cannot stall the whole refresh or trip the phone's patience.
+                val limit = if (config.type == SourceType.NAS_ARCHIVE) {
+                    NAS_THUMB_BATCH
+                } else {
+                    ThumbnailStore.REMOTE_THUMB_LIMIT
+                }
+                thumbnails.fetchRemote(source, limit = limit, onProgress = { completed ->
                     if (completed % THUMB_REFRESH_INTERVAL == 0) {
                         _state.value = _state.value.copy(items = page())
                     }
@@ -189,7 +197,10 @@ class TimelineController(
         const val PAGE_LIMIT = 2000L
 
         // How many thumbnails to finish before republishing the timeline.
-        const val THUMB_REFRESH_INTERVAL = 12
+        const val THUMB_REFRESH_INTERVAL = 4
+
+        // NAS misses download the original, so only a handful per refresh.
+        const val NAS_THUMB_BATCH = 6
 
         // Sources with no server-side thumbnail URL, so ThumbnailStore has to
         // download and render one locally instead of just linking to it.
