@@ -93,6 +93,16 @@ fun App(
     var selectedItem by remember { mutableStateOf<MediaItem?>(null) }
     /** Ids selected on the timeline; empty means normal single-item navigation. */
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    /** Search prompt opened from the magnifier in the top bar. */
+    var showSearch by remember { mutableStateOf(false) }
+    /** Non-null while the flat, multiselect results grid replaces the timeline. */
+    var searchResults by remember { mutableStateOf<List<MediaItem>?>(null) }
+
+    fun exitSearchResults() {
+        searchResults = null
+        selectedIds = emptySet()
+    }
+
     /** Non-null while the delete confirmation dialog is on screen. */
     var pendingDelete by remember { mutableStateOf<List<MediaItem>?>(null) }
     /** Items waiting for the user to pick a Move destination. */
@@ -130,6 +140,7 @@ fun App(
         scope.launch {
             controller.refresh()
             selectedIds = emptySet()
+            searchResults = null
             selectedItem = null
             infoItem = null
         }
@@ -183,10 +194,12 @@ fun App(
             topBar = {
                 TopAppBar(
                     title = {
+                        val results = searchResults
                         Text(
-                            when (screen) {
-                                Screen.TIMELINE -> "Silly"
-                                Screen.ACCOUNTS -> "Settings"
+                            when {
+                                screen != Screen.TIMELINE -> "Settings"
+                                results != null -> "Search results (${results.size})"
+                                else -> "Silly"
                             },
                         )
                     },
@@ -199,13 +212,24 @@ fun App(
                     },
                     actions = {
                         if (screen == Screen.TIMELINE) {
-                            if (state.isRefreshing || actionState.running) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.padding(end = 16.dp).size(24.dp),
-                                )
+                            if (searchResults != null) {
+                                // Back out of the flat results grid into the
+                                // normal, date-stamped timeline.
+                                TextButton(onClick = { exitSearchResults() }) {
+                                    Text("Cancel")
+                                }
                             } else {
-                                IconButton(onClick = { scope.launch { controller.refresh() } }) {
-                                    Text("\u21BB")
+                                IconButton(onClick = { showSearch = true }) {
+                                    Text("\uD83D\uDD0D")
+                                }
+                                if (state.isRefreshing || actionState.running) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.padding(end = 16.dp).size(24.dp),
+                                    )
+                                } else {
+                                    IconButton(onClick = { scope.launch { controller.refresh() } }) {
+                                        Text("\u21BB")
+                                    }
                                 }
                             }
                             if (accounts != null) {
@@ -239,18 +263,38 @@ fun App(
                                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                                 )
                             }
-                            TimelineScreen(
-                                items = visibleItems,
-                                modifier = Modifier.fillMaxSize(),
-                                selectedIds = selectedIds,
-                                onSelectionChange = { selectedIds = it },
-                                onItemClick = { selectedItem = it },
-                                onDeleteSelected = { requestDelete(it) },
-                                onMoveSelected = { requestMove(it) },
-                                sourceNames = sourceNames,
-                                canMove = hasAnyMoveDestination,
-                                busy = actionState.running,
-                            )
+                            val results = searchResults
+                            if (results != null) {
+                                TimelineScreen(
+                                    items = results,
+                                    modifier = Modifier.fillMaxSize(),
+                                    selectedIds = selectedIds,
+                                    onSelectionChange = { selectedIds = it },
+                                    onItemClick = { selectedItem = it },
+                                    onDeleteSelected = { requestDelete(it) },
+                                    onMoveSelected = { requestMove(it) },
+                                    sourceNames = sourceNames,
+                                    canMove = hasAnyMoveDestination,
+                                    busy = actionState.running,
+                                    showDateHeaders = false,
+                                    forceSelectionMode = true,
+                                    onCancel = { exitSearchResults() },
+                                    showBulkSelectButton = false,
+                                )
+                            } else {
+                                TimelineScreen(
+                                    items = visibleItems,
+                                    modifier = Modifier.fillMaxSize(),
+                                    selectedIds = selectedIds,
+                                    onSelectionChange = { selectedIds = it },
+                                    onItemClick = { selectedItem = it },
+                                    onDeleteSelected = { requestDelete(it) },
+                                    onMoveSelected = { requestMove(it) },
+                                    sourceNames = sourceNames,
+                                    canMove = hasAnyMoveDestination,
+                                    busy = actionState.running,
+                                )
+                            }
                         }
 
                         Screen.ACCOUNTS -> accounts?.let {
@@ -265,6 +309,21 @@ fun App(
                             )
                         }
                     }
+                }
+
+                if (showSearch && screen == Screen.TIMELINE) {
+                    BulkSelectDialog(
+                        items = visibleItems,
+                        sourceNames = sourceNames,
+                        onDismiss = { showSearch = false },
+                        onApply = { ids ->
+                            showSearch = false
+                            // The matched rows become the initial selection in
+                            // the flat results grid, ready to refine or act on.
+                            searchResults = visibleItems.filter { it.id in ids }
+                            selectedIds = ids
+                        },
+                    )
                 }
 
                 // Fullscreen photo viewer overlay

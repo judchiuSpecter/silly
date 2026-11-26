@@ -68,6 +68,13 @@ fun TimelineScreen(
     sourceNames: Map<String, String> = emptyMap(),
     canMove: Boolean = false,
     busy: Boolean = false,
+    /** Search results reuse this grid but drop the day headers and rail. */
+    showDateHeaders: Boolean = true,
+    /** Results stay in multiselect mode so matches can be refined before acting. */
+    forceSelectionMode: Boolean = false,
+    /** Overrides the bottom-bar Cancel, which normally just drops the selection. */
+    onCancel: (() -> Unit)? = null,
+    showBulkSelectButton: Boolean = true,
 ) {
     if (items.isEmpty()) {
         EmptyTimeline(modifier)
@@ -78,7 +85,8 @@ fun TimelineScreen(
     val sections = remember(items) { items.groupByDay() }
     val index = remember(sections) { TimelineIndex(sections) }
     val selectedItems = remember(items, selectedIds) { items.filter { it.id in selectedIds } }
-    val selectionMode = selectedIds.isNotEmpty()
+    val selectionMode = forceSelectionMode || selectedIds.isNotEmpty()
+    val cancelSelection = onCancel ?: { onSelectionChange(emptySet()) }
 
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
@@ -103,34 +111,50 @@ fun TimelineScreen(
             verticalArrangement = Arrangement.spacedBy(2.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            for (section in sections) {
-                item(
-                    key = "header-${section.date}",
-                    span = { GridItemSpan(maxLineSpan) },
-                ) {
-                    DayHeader(
-                        section = section,
-                        selectionMode = selectionMode,
-                        allSelected = section.items.all { it.id in selectedIds },
-                        onToggleAll = {
-                            val ids = section.items.map { it.id }.toSet()
-                            onSelectionChange(
-                                if (ids.all { it in selectedIds }) selectedIds - ids
-                                else selectedIds + ids,
-                            )
-                        },
-                    )
+            if (showDateHeaders) {
+                for (section in sections) {
+                    item(
+                        key = "header-${section.date}",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        DayHeader(
+                            section = section,
+                            selectionMode = selectionMode,
+                            allSelected = section.items.all { it.id in selectedIds },
+                            onToggleAll = {
+                                val ids = section.items.map { it.id }.toSet()
+                                onSelectionChange(
+                                    if (ids.all { it in selectedIds }) selectedIds - ids
+                                    else selectedIds + ids,
+                                )
+                            },
+                        )
+                    }
+                    items(section.items, key = { it.id }) { media ->
+                        MediaCell(
+                            item = media,
+                            modifier = Modifier.combinedClickable(
+                                onClick = {
+                                    if (selectionMode) toggle(media.id) else onItemClick(media)
+                                },
+                                onLongClick = { toggle(media.id) },
+                            ),
+                            selectionMode = selectionMode,
+                            selected = media.id in selectedIds,
+                            onToggleSelection = { toggle(media.id) },
+                        )
+                    }
                 }
-                items(section.items, key = { it.id }) { media ->
+            } else {
+                // Search results: same tiles, no day separators or date rail.
+                items(items, key = { it.id }) { media ->
                     MediaCell(
                         item = media,
                         modifier = Modifier.combinedClickable(
-                            onClick = {
-                                if (selectionMode) toggle(media.id) else onItemClick(media)
-                            },
+                            onClick = { toggle(media.id) },
                             onLongClick = { toggle(media.id) },
                         ),
-                        selectionMode = selectionMode,
+                        selectionMode = true,
                         selected = media.id in selectedIds,
                         onToggleSelection = { toggle(media.id) },
                     )
@@ -139,7 +163,7 @@ fun TimelineScreen(
         }
 
         // Only worth showing once the grid is long enough to be tedious.
-        if (items.size >= MIN_ITEMS_FOR_RAIL) {
+        if (showDateHeaders && items.size >= MIN_ITEMS_FOR_RAIL) {
             DateScrubber(
                 index = index,
                 scrollFraction = scrollFraction,
@@ -179,21 +203,23 @@ fun TimelineScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (showBulkSelectButton) {
+                        TextButton(
+                            onClick = { showBulkSelect = true },
+                            enabled = !busy,
+                        ) { Text("Select by…") }
+                    }
                     TextButton(
-                        onClick = { showBulkSelect = true },
-                        enabled = !busy,
-                    ) { Text("Select by…") }
-                    TextButton(
-                        onClick = { onSelectionChange(emptySet()) },
+                        onClick = cancelSelection,
                         enabled = !busy,
                     ) { Text("Cancel") }
                     Button(
                         onClick = { onMoveSelected(selectedItems) },
-                        enabled = !busy && canMove,
+                        enabled = !busy && canMove && selectedItems.isNotEmpty(),
                     ) { Text("Move") }
                     Button(
                         onClick = { onDeleteSelected(selectedItems) },
-                        enabled = !busy,
+                        enabled = !busy && selectedItems.isNotEmpty(),
                     ) { Text("Delete") }
                 }
             }
