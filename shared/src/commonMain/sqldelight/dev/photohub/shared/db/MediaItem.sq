@@ -103,6 +103,9 @@ WHERE Source.enabled = 1 AND MediaItem.thumbCachePath IS NULL
   -- Drive exposes a thumbnail URL the UI loads directly; trying to render that
   -- HTTPS string as a local file always failed and retried every refresh.
   AND (MediaItem.remoteThumbUrl IS NULL OR MediaItem.remoteThumbUrl NOT LIKE 'http%')
+  -- MEGA and NAS paths are not local files; ThumbnailStore.fetchRemote handles
+  -- them with a download + server-thumbnail fallback and its own per-pass cap.
+  AND Source.type NOT IN ('MEGA', 'NAS_ARCHIVE')
 ORDER BY MediaItem.dateTaken DESC
 LIMIT :limit;
 
@@ -122,7 +125,8 @@ SELECT COUNT(*)
 FROM MediaItem
 JOIN Source ON Source.id = MediaItem.sourceId
 WHERE Source.enabled = 1 AND MediaItem.thumbCachePath IS NULL
-  AND (MediaItem.remoteThumbUrl IS NULL OR MediaItem.remoteThumbUrl NOT LIKE 'http%');
+  AND (MediaItem.remoteThumbUrl IS NULL OR MediaItem.remoteThumbUrl NOT LIKE 'http%')
+  AND Source.type NOT IN ('MEGA', 'NAS_ARCHIVE');
 
 setThumbCache:
 UPDATE MediaItem SET thumbCachePath = ?, syncState = 'THUMB_CACHED' WHERE id = ?;

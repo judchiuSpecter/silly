@@ -29,6 +29,9 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
     companion object {
         /** How many downloaded thumbnails to build per refresh. */
         const val REMOTE_THUMB_LIMIT = 120
+
+        /** Bound local rendering too, so a huge library cannot peg the CPU. */
+        const val LOCAL_THUMB_LIMIT = 300
     }
 
     /** Longest edge of a generated thumbnail, in pixels. */
@@ -47,7 +50,10 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
      * the visible top of the timeline sharpens before older photos.
      *
      * Decoding is CPU-bound, so items are rendered [thumbnailConcurrency] at a
-     * time. Database writes are applied serially per batch — SQLite has a single
+     * time and capped per refresh; the next pass picks up where this one stopped.
+     * Remote-only sources are excluded here and handled by [fetchRemote], which
+     * downloads their server thumbnails instead of treating a NAS path as a local
+     * file. Database writes are applied serially per batch — SQLite has a single
      * connection, and funnelling writes through the collecting coroutine keeps
      * them off the worker threads entirely.
      *
@@ -55,7 +61,7 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
      * instead of waiting for the whole library.
      */
     suspend fun generateMissing(
-        limit: Int = Int.MAX_VALUE,
+        limit: Int = LOCAL_THUMB_LIMIT,
         onProgress: (completed: Int) -> Unit = {},
     ): Stats {
         val pending = db.mediaItemQueries.selectMissingThumbnails(limit.toLong()).executeAsList()

@@ -153,6 +153,8 @@ class ThumbnailThroughputTest {
         repo.upsertCloudSource("nas_1", SourceType.NAS_ARCHIVE, "NAS", configJson)
         val first = CountingSource(nasConfig("nas_1", configJson), item)
         MediaIndexer(db).index(first).getOrThrow()
+        // A NAS path is not a local file: the generic renderer must not try it.
+        assertEquals(0, ThumbnailStore(db).generateMissing().completed)
         val firstStats = ThumbnailStore(db).fetchRemote(first, limit = 10)
         assertEquals(1, firstStats.generated)
         assertEquals(1, first.fetchCalls)
