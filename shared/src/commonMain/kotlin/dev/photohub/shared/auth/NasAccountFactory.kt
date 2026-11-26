@@ -73,8 +73,9 @@ class NasAccountFactory(
             Json.decodeFromString<NasSourceConfig>(config.configJson)
         }.getOrElse { NasSourceConfig() }
         // Remote users forward one HTTPS port on the router rather than using
-        // a LAN address. The default external port is 8443 -> NAS port 443.
-        val webBase = settings.webBaseUrl.trim().ifBlank { "https://${settings.host}:8443" }
+        // a LAN address. The gateway maps the same port externally and
+        // internally, so use 443 -> 443; the NAS already listens there.
+        val webBase = settings.webBaseUrl.trim().ifBlank { "https://${settings.host}:443" }
         val api = FileStationApi(webBase, settings.username, password)
         return NasMediaSource(config, password, api)
     }

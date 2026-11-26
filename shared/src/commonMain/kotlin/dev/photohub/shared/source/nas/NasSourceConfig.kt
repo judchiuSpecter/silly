@@ -25,9 +25,9 @@ data class NasSourceConfig(
     val remotePath: String = "/share/Photos",
     /**
      * Base URL for QTS's File Station API, used for server-rendered JPEG
-     * thumbnails. Blank means `https://<host>:8443` — forward that external
-     * port to the NAS's HTTPS port 443 on the router. Set explicitly if the
-     * forwarded port or hostname differs.
+     * thumbnails. Blank means `https://<host>:443`; forward external 443 to
+     * the NAS's HTTPS port 443 on the router. Set explicitly if the forwarded
+     * port or hostname differs.
      */
     val webBaseUrl: String = "",
 ) {
