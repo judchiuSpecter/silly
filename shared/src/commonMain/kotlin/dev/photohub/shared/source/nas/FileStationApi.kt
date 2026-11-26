@@ -9,6 +9,7 @@ import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -84,6 +85,8 @@ class FileStationApi(
         val body = response.bodyAsText()
         if (body.isBlank() || body.trimStart().startsWith("{")) return null
         return runCatching { json.decodeFromString<FileList>(body) }.getOrNull()
+    } catch (error: CancellationException) {
+        throw error
     } catch (error: Throwable) {
         println("[fileStation] list $path: ${error::class.simpleName}: ${error.message}")
         null
@@ -129,6 +132,8 @@ class FileStationApi(
         if (response.status.value != 200) return null
         val xml = response.bodyAsText()
         SID_REGEX.find(xml)?.groupValues?.get(1)
+    } catch (error: CancellationException) {
+        throw error
     } catch (error: Throwable) {
         println("[fileStation] login: ${error::class.simpleName}: ${error.message}")
         null

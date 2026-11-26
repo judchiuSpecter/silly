@@ -142,17 +142,15 @@ fun App(
         // schedules survive restarts but not a reinstall, and a user who linked
         // in an earlier build never got one.
         accounts?.syncBackgroundWork()
-        if (refreshOnStart) controller.refresh()
+        if (refreshOnStart) controller.requestRefresh()
     }
 
     fun finishAction() {
-        scope.launch {
-            controller.refresh()
-            selectedIds = emptySet()
-            searchResults = null
-            selectedItem = null
-            infoItem = null
-        }
+        controller.requestRefresh()
+        selectedIds = emptySet()
+        searchResults = null
+        selectedItem = null
+        infoItem = null
     }
 
     fun performDelete(items: List<MediaItem>) {
@@ -236,7 +234,7 @@ fun App(
                                         modifier = Modifier.padding(end = 16.dp).size(24.dp),
                                     )
                                 } else {
-                                    IconButton(onClick = { scope.launch { controller.refresh() } }) {
+                                    IconButton(onClick = { controller.requestRefresh() }) {
                                         Text("\u21BB")
                                     }
                                 }

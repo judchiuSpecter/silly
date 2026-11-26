@@ -4,10 +4,14 @@ import dev.photohub.shared.db.MediaItem
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.source.SourceRegistry
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,6 +47,20 @@ class TimelineController(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * Refresh lives outside Compose's scope. A 96k-source walk takes minutes;
+     * tying it to a `LaunchedEffect` meant any recomposition, rotation, or
+     * screen transition cancelled it mid-login and surfaced a spurious error.
+     */
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var refreshJob: Job? = null
+
+    /** Starts a refresh without blocking the caller; ignores duplicate taps. */
+    fun requestRefresh() {
+        if (refreshJob?.isActive == true) return
+        refreshJob = backgroundScope.launch { refresh() }
+    }
 
     /** Publishes whatever is already cached, without touching any source. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
