@@ -30,7 +30,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Silly"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             description = "A minimalist image manager that pulls from a mosaic of sources"
             vendor = "Silly"
 
