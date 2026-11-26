@@ -68,6 +68,23 @@ class TimelineController(
     }
 
     /**
+     * Links one freshly fetched thumbnail into the published timeline. Republishing
+     * the whole page for every visible cell would re-read and dedupe ~100k rows
+     * per thumbnail, so grid cells update just their own item instead.
+     */
+    fun updateThumbnail(itemId: String, path: String) {
+        _state.value = _state.value.copy(
+            items = _state.value.items.map { item ->
+                if (item.id == itemId) {
+                    item.copy(thumbCachePath = path, syncState = "THUMB_CACHED")
+                } else {
+                    item
+                }
+            },
+        )
+    }
+
+    /**
      * Re-indexes all enabled sources and republishes the timeline.
      *
      * Safe to call when permission has not been granted: the local source

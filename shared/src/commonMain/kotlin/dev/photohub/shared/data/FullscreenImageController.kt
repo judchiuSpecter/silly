@@ -105,7 +105,7 @@ class FullscreenImageController(
         const val ORIGINALS_DIR = "originals"
 
         /** Max remote cells one screen session may try to fetch on demand. */
-        const val ON_DEMAND_THUMB_BUDGET = 24
+        const val ON_DEMAND_THUMB_BUDGET = 250
 
         /** Sources whose thumbnail is too small to view full-screen as-is. */
         val REMOTE_ORIGINAL_TYPES = setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)
