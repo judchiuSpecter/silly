@@ -6,6 +6,8 @@ import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.platform.cacheDir
 import dev.photohub.shared.platform.fileSystem
 import dev.photohub.shared.source.SourceRegistry
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okio.Path
 import java.io.File
 
@@ -21,7 +23,34 @@ import java.io.File
 class FullscreenImageController(
     private val repository: MediaRepository,
     private val sources: SourceRegistry,
+    private val thumbnails: ThumbnailStore,
 ) {
+    /** Avoids opening dozens of SFTP sessions when a grid of remote cells appears. */
+    private val thumbnailLock = Mutex()
+    private val fetchingThumbnails = mutableSetOf<String>()
+
+    /**
+     * Downloads the thumbnail for one visible remote cell and links it into the
+     * row, so the grid can sharpen without waiting for a whole sync pass.
+     */
+    suspend fun ensureThumbnail(item: MediaItem): String? {
+        val claimed = thumbnailLock.withLock {
+            if (item.id in fetchingThumbnails) false else {
+                fetchingThumbnails += item.id
+                true
+            }
+        }
+        if (!claimed) return null
+        return try {
+            val config = repository.sourceById(item.sourceId) ?: return null
+            if (!(config.type in REMOTE_ORIGINAL_TYPES && config.enabled)) return null
+            val source = sources.create(config) ?: return null
+            thumbnails.ensureOne(source, item)
+        } finally {
+            thumbnailLock.withLock { fetchingThumbnails -= item.id }
+        }
+    }
+
     /**
      * Returns a local path to the original, or null when none can be produced.
      *

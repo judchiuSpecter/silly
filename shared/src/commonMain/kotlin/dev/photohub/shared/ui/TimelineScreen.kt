@@ -75,6 +75,8 @@ fun TimelineScreen(
     /** Overrides the bottom-bar Cancel, which normally just drops the selection. */
     onCancel: (() -> Unit)? = null,
     showBulkSelectButton: Boolean = true,
+    /** Fetches a visible remote thumbnail on demand (NAS/MEGA). */
+    onEnsureThumbnail: suspend (MediaItem) -> Unit = {},
 ) {
     if (items.isEmpty()) {
         EmptyTimeline(modifier)
@@ -142,6 +144,7 @@ fun TimelineScreen(
                             selectionMode = selectionMode,
                             selected = media.id in selectedIds,
                             onToggleSelection = { toggle(media.id) },
+                            onEnsureThumbnail = onEnsureThumbnail,
                         )
                     }
                 }
@@ -157,6 +160,7 @@ fun TimelineScreen(
                         selectionMode = true,
                         selected = media.id in selectedIds,
                         onToggleSelection = { toggle(media.id) },
+                        onEnsureThumbnail = onEnsureThumbnail,
                     )
                 }
             }

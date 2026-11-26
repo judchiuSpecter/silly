@@ -89,6 +89,13 @@ fun App(
         it.canReceiveMoves && it.state == AccountsController.LinkState.LINKED
     }
 
+    // Visible remote cells fetch only their own thumbnail; republishing the
+    // cached page is enough to swap the placeholder for the real image.
+    val ensureVisibleThumbnail: suspend (MediaItem) -> Unit = { media ->
+        val path = fullscreenImages?.ensureThumbnail(media)
+        if (path != null) controller.republish()
+    }
+
     /** Item being shown full-screen, or null when on the timeline grid. */
     var selectedItem by remember { mutableStateOf<MediaItem?>(null) }
     /** Ids selected on the timeline; empty means normal single-item navigation. */
@@ -280,6 +287,7 @@ fun App(
                                     forceSelectionMode = true,
                                     onCancel = { exitSearchResults() },
                                     showBulkSelectButton = false,
+                                    onEnsureThumbnail = ensureVisibleThumbnail,
                                 )
                             } else {
                                 TimelineScreen(
@@ -293,6 +301,7 @@ fun App(
                                     sourceNames = sourceNames,
                                     canMove = hasAnyMoveDestination,
                                     busy = actionState.running,
+                                    onEnsureThumbnail = ensureVisibleThumbnail,
                                 )
                             }
                         }

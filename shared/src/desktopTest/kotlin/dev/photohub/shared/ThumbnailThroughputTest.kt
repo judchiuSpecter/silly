@@ -24,6 +24,7 @@ import java.nio.file.Files
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.measureTime
 
@@ -167,6 +168,34 @@ class ThumbnailThroughputTest {
         assertEquals(1, secondStats.reused)
         assertEquals(0, secondStats.generated)
         assertEquals(0, second.fetchCalls)
+    }
+
+    @Test
+    fun ensureOneDownloadsOnlyTheVisibleNasThumbnail() = runTest {
+        val unique = System.nanoTime().toString()
+        val configJson = Json.encodeToString(
+            NasSourceConfig(host = "nas-on-demand-$unique.local", username = "admin", remotePath = "/share/Photos"),
+        )
+        val item = RemoteMedia(
+            remoteId = "/share/Photos/$unique-on-demand.jpg",
+            displayName = "one.jpg",
+            mimeType = "image/jpeg",
+            isVideo = false,
+            sizeBytes = 1234,
+            dateTakenEpochMs = 1000L,
+        )
+        val db = newDb()
+        val repo = MediaRepository(db)
+        repo.upsertCloudSource("nas_1", SourceType.NAS_ARCHIVE, "NAS", configJson)
+        val source = CountingSource(nasConfig("nas_1", configJson), item)
+        MediaIndexer(db).index(source).getOrThrow()
+        val row = repo.timelinePage(limit = 10, offset = 0).single()
+
+        val path = ThumbnailStore(db).ensureOne(source, row)
+
+        assertNotNull(path)
+        assertEquals(1, source.fetchCalls)
+        assertNotNull(repo.itemById(row.id)!!.thumbCachePath)
     }
 
     @Test

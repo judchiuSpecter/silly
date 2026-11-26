@@ -73,7 +73,7 @@ val sharedModule = module {
     single<NasAccounts> { NasAccountFactory(credentials = get()) }
 
     single { UploadManager(get(), now = { nowEpochMs() }) }
-    single { FullscreenImageController(get(), get()) }
+    single { FullscreenImageController(get(), get(), get()) }
     single {
         val images = get<FullscreenImageController>()
         MediaInfoController(get(), ensureOriginal = { item -> images.ensureOriginal(item) })

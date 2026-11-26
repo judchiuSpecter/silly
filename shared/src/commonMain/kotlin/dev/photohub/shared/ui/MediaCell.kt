@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ fun MediaCell(
     selectionMode: Boolean = false,
     selected: Boolean = false,
     onToggleSelection: () -> Unit = {},
+    onEnsureThumbnail: suspend (MediaItem) -> Unit = {},
 ) {
     val hoverInteraction = remember { MutableInteractionSource() }
     val hovered by hoverInteraction.collectIsHoveredAsState()
@@ -58,6 +60,9 @@ fun MediaCell(
         Box(Modifier.fillMaxSize()) {
             if (model == null) {
                 Placeholder(item)
+                // A remote row with no cached pixels is not lost: ask the owner
+                // source for just this thumbnail while the cell is on screen.
+                LaunchedEffect(item.id) { onEnsureThumbnail(item) }
             } else {
                 AsyncImage(
                     model = model,

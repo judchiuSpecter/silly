@@ -96,12 +96,15 @@ fun FullscreenPhotoViewer(
         onDelete = onDelete,
     )
 
-    // A cloud item starts with its thumbnail URL. Try to upgrade it to the
-    // original through the source that owns this account; failure is non-fatal
-    // because the thumbnail is already visible.
+    // A cloud item starts with a thumbnail URL (or, for a not-yet-cached NAS
+    // row, nothing at all). Try to upgrade it to the original through the
+    // source that owns this account; failure is non-fatal because a thumbnail
+    // may still be visible.
     LaunchedEffect(item.id) {
         val current = imageModel
-        if (images == null || current !is String || !current.startsWith("https://")) return@LaunchedEffect
+        val needsOriginal = current == null ||
+            (current is String && current.startsWith("https://"))
+        if (images == null || !needsOriginal) return@LaunchedEffect
         downloading = true
         val original = images.ensureOriginal(item)
         if (original != null) imageModel = File(original)

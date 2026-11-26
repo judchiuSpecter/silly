@@ -151,17 +151,7 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
                 continue
             }
 
-            val remote = RemoteMedia(
-                remoteId = row.remoteId,
-                displayName = row.displayName,
-                mimeType = row.mimeType,
-                isVideo = row.isVideo == 1L,
-                sizeBytes = row.sizeBytes,
-                dateTakenEpochMs = row.dateTaken,
-                thumbnailUrl = row.remoteThumbUrl,
-                contentHash = row.contentHash,
-            )
-            val path = source.fetchThumbnail(remote, target).getOrNull()
+            val path = source.fetchThumbnail(row.toRemoteMedia(), target).getOrNull()
             if (path != null) {
                 db.mediaItemQueries.setThumbCache(path.toString(), row.id)
                 generated++
@@ -172,6 +162,36 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
         }
         return Stats(generated = generated, reused = reused, failed = failed)
     }
+
+    /**
+     * Fetches one remote thumbnail on demand. Unlike the capped sync pass this
+     * is driven by the visible grid cell, so a NAS archive with 100k rows can
+     * still show the photos the user is looking at without a full refresh.
+     */
+    suspend fun ensureOne(source: MediaSource, row: MediaItem): String? {
+        row.thumbCachePath?.takeIf { it.isNotBlank() }?.let { return it }
+        val target = keyedTarget(row)
+        if (fileSystem.exists(target)) {
+            db.mediaItemQueries.setThumbCache(target.toString(), row.id)
+            return target.toString()
+        }
+        val path = source.fetchThumbnail(row.toRemoteMedia(), target).getOrNull() ?: return null
+        db.mediaItemQueries.setThumbCache(path.toString(), row.id)
+        return path.toString()
+    }
+
+    private fun MediaItem.toRemoteMedia() = RemoteMedia(
+        remoteId = remoteId,
+        displayName = displayName,
+        mimeType = mimeType,
+        isVideo = isVideo == 1L,
+        sizeBytes = sizeBytes,
+        dateTakenEpochMs = dateTaken,
+        width = width?.toInt(),
+        height = height?.toInt(),
+        thumbnailUrl = remoteThumbUrl,
+        contentHash = contentHash,
+    )
 
     /**
      * Prefers the stable cross-reconnect key. On an upgraded database the key

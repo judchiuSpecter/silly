@@ -115,6 +115,11 @@ class TimelineController(
         }
     }
 
+    /** Republishes the cached page after an on-demand thumbnail fetch. */
+    fun republish() {
+        _state.value = _state.value.copy(items = page())
+    }
+
     /**
      * Re-attempts exactly one source, bypassing the "already failed" skip in
      * [refresh]. This is what the Sources screen's retry action calls: it
