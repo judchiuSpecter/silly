@@ -72,7 +72,9 @@ fun DateScrubber(
         modifier = modifier
             .fillMaxHeight()
             .width(RAIL_WIDTH)
-            .onSizeChanged { trackHeightPx = if (it.height > 0) it.height.toFloat() else 0f }
+            .onSizeChanged {
+                trackHeightPx = if (it.height > 0) it.height.toFloat() else 0f
+            }
             .pointerInput(index) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)

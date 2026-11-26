@@ -40,6 +40,7 @@ import dev.photohub.shared.data.TimelineIndex
 import dev.photohub.shared.data.TimelineSection
 import dev.photohub.shared.data.groupByDay
 import dev.photohub.shared.db.MediaItem
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.format.MonthNames
@@ -92,6 +93,7 @@ fun TimelineScreen(
 
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    var seekJob by remember { mutableStateOf<Job?>(null) }
     var showBulkSelect by remember { mutableStateOf(false) }
 
     fun toggle(id: String) {
@@ -172,13 +174,16 @@ fun TimelineScreen(
                 index = index,
                 scrollFraction = scrollFraction,
                 onSeek = { entry ->
-                    scope.launch {
-                        // Jump, not animate: a drag produces a seek per frame and
-                        // animations would queue up and lag behind the finger.
-                        gridState.scrollToItem(entry.gridIndex)
-                    }
+                    // Jump, not animate: a drag produces a seek per frame. Cancel
+                    // the previous jump so frames cannot queue up behind the finger.
+                    seekJob?.cancel()
+                    seekJob = scope.launch { gridState.scrollToItem(entry.gridIndex) }
                 },
-                modifier = Modifier.align(Alignment.CenterEnd),
+                // Keep the rail clear of Android's right-edge back gesture; a
+                // drag starting at the physical edge is consumed by the system.
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp),
             )
         }
 

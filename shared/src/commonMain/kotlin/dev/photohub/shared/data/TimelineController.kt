@@ -212,7 +212,10 @@ class TimelineController(
 
     private companion object {
         // One screenful of a large library; paging in on scroll comes with M5.
-        const val PAGE_LIMIT = 2000L
+        // The date rail needs the whole library to have something to seek to;
+        // a 2,000-row page can be entirely one import day and collapses to a
+        // couple of sections after dedupe. LazyVerticalGrid handles 100k rows.
+        const val PAGE_LIMIT = 100_000L
 
         // How many thumbnails to finish before republishing the timeline.
         const val THUMB_REFRESH_INTERVAL = 4
