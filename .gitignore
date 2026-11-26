@@ -24,3 +24,5 @@ keystore.properties
 .env
 .env.*
 *.tokens.json
+__pycache__/
+*.pyc
