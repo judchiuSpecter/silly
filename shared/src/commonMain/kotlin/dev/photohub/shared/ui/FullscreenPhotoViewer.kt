@@ -1,8 +1,11 @@
 package dev.photohub.shared.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -37,6 +41,7 @@ import dev.photohub.shared.platform.VideoPlayer
 import dev.photohub.shared.platform.scrollWheelZoom
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * Fullscreen photo/video viewer that replaces the timeline grid.
@@ -115,57 +120,87 @@ fun FullscreenPhotoViewer(
                 // zooms/pans the image, mirrored on desktop by scroll-to-zoom
                 // and a mouse-held drag.
                 .pointerInput(item.id, isPlayableVideo) {
+                    val horizontalThreshold = 72.dp.toPx()
+                    val verticalThreshold = 96.dp.toPx()
+
+                    fun swipe(totalX: Float, totalY: Float) {
+                        when {
+                            // Vertical wins only when it is clearly the intended
+                            // direction, so a slight diagonal on a photo swipe
+                            // cannot navigate or dismiss by mistake.
+                            abs(totalY) >= verticalThreshold &&
+                                abs(totalY) > abs(totalX) * 1.2f -> {
+                                // Down is the familiar Android dismiss; up shows info.
+                                // Delete stays behind the explicit button.
+                                if (totalY > 0f) onDismiss() else onInfo()
+                            }
+                            abs(totalX) >= horizontalThreshold -> {
+                                if (totalX < 0f) onNext() else onPrevious()
+                            }
+                        }
+                    }
+
                     if (isPlayableVideo) {
                         var totalX = 0f
                         var totalY = 0f
                         detectDragGestures(
                             onDragStart = { totalX = 0f; totalY = 0f },
                             onDrag = { _, dragAmount -> totalX += dragAmount.x; totalY += dragAmount.y },
-                            onDragEnd = {
-                                when {
-                                    abs(totalY) >= 96f && abs(totalY) > abs(totalX) * 1.2f -> {
-                                        if (totalY > 0f) onDelete() else onDismiss()
-                                    }
-                                    abs(totalX) >= 72f -> {
-                                        if (totalX < 0f) onNext() else onPrevious()
-                                    }
-                                }
-                            },
+                            onDragEnd = { swipe(totalX, totalY) },
                         )
                         return@pointerInput
                     }
-                    while (true) {
+
+                    // One detector for both one-finger swipes and two-finger
+                    // pinch/pan. detectTransformGestures consumes single-pointer
+                    // drags as pan, which made the swipe actions unreachable;
+                    // check the pointer count explicitly instead.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
                         var totalX = 0f
                         var totalY = 0f
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            if (scale > 1.01f || zoom != 1f) {
-                                val newScale = (scale * zoom).coerceIn(1f, 5f)
-                                scale = newScale
-                                if (newScale <= 1.01f) {
-                                    offsetX = 0f
-                                    offsetY = 0f
-                                } else {
-                                    offsetX += pan.x
-                                    offsetY += pan.y
+                        var multiTouch = false
+                        var pastSlop = false
+                        val touchSlop = viewConfiguration.touchSlop
+
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } > 1) multiTouch = true
+
+                            if (multiTouch) {
+                                val zoom = event.calculateZoom()
+                                val pan = event.calculatePan()
+                                if (zoom != 1f || pan != Offset.Zero) {
+                                    val newScale = (scale * zoom).coerceIn(1f, 5f)
+                                    scale = newScale
+                                    if (newScale <= 1.01f) {
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    } else {
+                                        offsetX += pan.x
+                                        offsetY += pan.y
+                                    }
                                 }
                             } else {
-                                totalX += pan.x
-                                totalY += pan.y
-                            }
-                        }
-                        if (scale <= 1.01f) {
-                            when {
-                                // Vertical wins only when it is clearly the intended
-                                // direction, so a slight diagonal on a photo swipe
-                                // cannot delete or close anything.
-                                abs(totalY) >= 96f && abs(totalY) > abs(totalX) * 1.2f -> {
-                                    if (totalY > 0f) onDelete() else onDismiss()
+                                val change = event.changes.firstOrNull { it.id == down.id && it.pressed }
+                                if (change != null && change.positionChanged()) {
+                                    val dx = change.position.x - change.previousPosition.x
+                                    val dy = change.position.y - change.previousPosition.y
+                                    if (scale > 1.01f) {
+                                        // Already zoomed: this finger pans the photo.
+                                        offsetX += dx
+                                        offsetY += dy
+                                    } else {
+                                        totalX += dx
+                                        totalY += dy
+                                        if (hypot(totalX, totalY) > touchSlop) pastSlop = true
+                                    }
                                 }
-                                abs(totalX) >= 72f -> {
-                                    if (totalX < 0f) onNext() else onPrevious()
-                                }
                             }
-                        }
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        } while (event.changes.any { it.pressed })
+
+                        if (!multiTouch && scale <= 1.01f && pastSlop) swipe(totalX, totalY)
                     }
                 }
                 .scrollWheelZoom(enabled = !isPlayableVideo) { factor ->
