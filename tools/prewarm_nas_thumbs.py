@@ -7,7 +7,8 @@ copying them into the app's cache lets the phone link them without downloading
 anything.
 
 Usage:
-    python3 tools/prewarm_nas_thumbs.py --limit 5000 --push-device 10.0.0.20:33607
+    python3 tools/prewarm_nas_thumbs.py --limit 5000 --upload-to-nas \
+        --push-device 10.0.0.20:33607
 
 Only rows whose thumbCachePath is NULL are processed. Originals are staged on
 disk (not /tmp, which is a small tmpfs) and removed when the run finishes.
@@ -123,6 +124,39 @@ def download_originals(remote_paths: list[tuple[str, Path]], askpass: Path) -> i
     return sum(1 for _, local in remote_paths if local.is_file() and local.stat().st_size > 0)
 
 
+def nas_thumb_path(remote_id: str) -> str:
+    """Where the app looks for a pre-rendered QTS thumbnail."""
+    slash = remote_id.rfind("/")
+    parent = remote_id[:slash] if slash > 0 else ""
+    name = remote_id[slash + 1:]
+    base = "" if parent in ("", "/") else parent
+    return f"{base}/.@__thumb/default/{name}"
+
+
+def upload_thumbs(uploads: list[tuple[str, Path]], askpass: Path) -> None:
+    """Write tiny JPEGs next to their originals so every device can reuse them."""
+    batch = STAGE / "upload.batch"
+    dirs = sorted({nas_thumb_path(remote).rsplit("/", 1)[0] for remote, _ in uploads})
+    batch.write_text(
+        "".join(f"-mkdir {sftp_quote(d)}\n" for d in dirs)
+        + "".join(
+            f"put {sftp_quote(str(local))} {sftp_quote(nas_thumb_path(remote))}\n"
+            for remote, local in uploads
+        )
+    )
+    result = subprocess.run(
+        ["setsid", "sftp", *ssh_opts(), "-b", str(batch), f"{SSH_USER}@{SSH_HOST}"],
+        env=ssh_env(askpass),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(result.stdout[-4000:], file=sys.stderr)
+        raise SystemExit("NAS thumbnail upload failed")
+    batch.unlink(missing_ok=True)
+
+
 def make_thumbnail(original: Path, target: Path, is_video: bool) -> bool:
     source = original
     temp = None
@@ -155,6 +189,11 @@ def main() -> None:
     parser.add_argument("--source-id", default="nas_c411a122")
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--push-device", help="adb device serial to copy thumbnails to")
+    parser.add_argument(
+        "--upload-to-nas",
+        action="store_true",
+        help="also write generated thumbnails into the NAS .@__thumb folders",
+    )
     parser.add_argument("--keep-originals", action="store_true")
     args = parser.parse_args()
 
@@ -200,6 +239,7 @@ def main() -> None:
     print(f"Downloaded {ok}/{len(downloads)} originals")
 
     saved = 0
+    uploadable: list[tuple[str, Path]] = []
     for index, (row_id, remote_id, thumb, is_video) in enumerate(jobs, 1):
         original = originals_dir / f"{thumb.name}.orig"
         if not original.exists():
@@ -210,12 +250,18 @@ def main() -> None:
                 (str(thumb), row_id),
             )
             saved += 1
+            uploadable.append((remote_id, thumb))
             if not args.keep_originals:
                 original.unlink(missing_ok=True)
         if index % 100 == 0:
             print(f"  generated {index}/{len(jobs)}")
     db.commit()
     print(f"Generated {saved} thumbnails in {THUMB_DIR}")
+
+    if args.upload_to_nas and uploadable:
+        print(f"Uploading {len(uploadable)} thumbnails to NAS .@__thumb folders...")
+        upload_thumbs(uploadable, askpass)
+        print("NAS-side thumbnails ready")
 
     if args.push_device:
         remote_stage = "/sdcard/photohub_thumbs"

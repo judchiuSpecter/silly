@@ -24,5 +24,7 @@ keystore.properties
 .env
 .env.*
 *.tokens.json
+
+# Python helper caches.
 __pycache__/
 *.pyc

@@ -96,15 +96,13 @@ fun FullscreenPhotoViewer(
         onDelete = onDelete,
     )
 
-    // A cloud item starts with a thumbnail URL (or, for a not-yet-cached NAS
-    // row, nothing at all). Try to upgrade it to the original through the
-    // source that owns this account; failure is non-fatal because a thumbnail
-    // may still be visible.
+    // Even when a thumbnail is already cached locally, a remote row still needs
+    // its original for full resolution — and a video only becomes playable once
+    // that original is on disk. ensureOriginal is a no-op for local sources and
+    // returns an already cached original instantly, so this is safe for every
+    // item. Failure is non-fatal because the thumbnail is still visible.
     LaunchedEffect(item.id) {
-        val current = imageModel
-        val needsOriginal = current == null ||
-            (current is String && current.startsWith("https://"))
-        if (images == null || !needsOriginal) return@LaunchedEffect
+        if (images == null) return@LaunchedEffect
         downloading = true
         val original = images.ensureOriginal(item)
         if (original != null) imageModel = File(original)
