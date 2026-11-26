@@ -16,9 +16,45 @@ import dev.photohub.shared.db.MediaItem as DbMediaItem
  */
 class MediaRepository(private val db: PhotoHubDatabase) {
 
-    /** One page of the unified timeline, newest first. */
+    /** One page of the unified timeline, newest first, with cloud copies hidden. */
     fun timelinePage(limit: Long, offset: Long): List<DbMediaItem> =
-        db.mediaItemQueries.timelinePage(limit, offset).executeAsList()
+        dedupe(db.mediaItemQueries.timelinePage(limit, offset).executeAsList())
+
+    /**
+     * An uploaded file is indexed twice: once from the camera roll and once
+     * from the cloud account holding the copy. Each row is still needed — you
+     * can delete or move each copy independently — but the timeline must show
+     * one photo, preferring the local one so offline actions work.
+     *
+     * Hashed rows match exactly. Most rows have no hash yet, so fall back to
+     * name + size + type, which is what the uploader already uses to recognise
+     * a copy it made earlier.
+     */
+    private fun dedupe(items: List<DbMediaItem>): List<DbMediaItem> {
+        val kept = mutableListOf<DbMediaItem>()
+        for (group in items.groupBy { nameKey(it) }.values) {
+            val hashes = group.mapNotNull { it.contentHash?.takeIf { hash -> hash.isNotBlank() } }.toSet()
+            if (hashes.size > 1) {
+                // Same filename/size but different bytes: they really are
+                // different photos, so keep one row per distinct hash.
+                group.groupBy { it.contentHash?.takeIf { hash -> hash.isNotBlank() } ?: "nohash:${it.id}" }
+                    .values
+                    .forEach { kept += preferred(it) }
+            } else {
+                kept += preferred(group)
+            }
+        }
+        return kept.sortedByDescending { it.dateTaken }
+    }
+
+    private fun nameKey(item: DbMediaItem): String =
+        "name:${item.displayName}|${item.sizeBytes}|${item.mimeType}"
+
+    private fun preferred(group: List<DbMediaItem>): DbMediaItem =
+        group.minWith(
+            compareBy<DbMediaItem> { if (it.sourceId == LocalSourceConfig.SOURCE_ID) 0 else 1 }
+                .thenBy { it.id },
+        )
 
     fun itemById(id: String): DbMediaItem? =
         db.mediaItemQueries.selectById(id).executeAsOneOrNull()

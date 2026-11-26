@@ -14,11 +14,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.xfer.FileSystemFile
 import okio.Path
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 
 /**
  * NAS archive as a PhotoHub media source, reached over SFTP.
@@ -58,30 +59,34 @@ class NasMediaSource(
             if (cursor != null) return@runCatching MediaPage(emptyList(), null)
 
             withClient { ssh ->
-                ssh.newSFTPClient().use { sftp ->
+                ssh.startSession().use { session ->
+                    // A directory-at-a-time SFTP walk needed ~100k round trips
+                    // for this archive and looked like a frozen app. One remote
+                    // shell command returns the same metadata in one stream.
+                    val command = session.exec(listingCommand(settings.remotePath.ifBlank { "/" }))
                     val items = mutableListOf<RemoteMedia>()
-                    val root = settings.remotePath.ifBlank { "/" }
-
-                    fun walk(path: String) {
-                        val entries = sftp.ls(path)
-                        for (entry in entries) {
-                            if (entry.name == "." || entry.name == "..") continue
-                            // QTS keeps a hidden recycle bin and a thumbnail
-                            // cache beside every share; neither belongs in the
-                            // timeline as media, though fetchThumbnail reads the
-                            // latter instead of downloading full originals.
-                            if (entry.name in SKIPPED_DIR_NAMES) continue
-                            when {
-                                entry.isDirectory -> walk(entry.path)
-                                entry.isRegularFile -> {
-                                    val mime = MediaTypes.mimeTypeOf(entry.name) ?: continue
-                                    items += entry.toRemoteMedia(mime)
-                                }
-                            }
+                    BufferedReader(InputStreamReader(command.inputStream, Charsets.UTF_8)).use { reader ->
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            val file = parseStatLine(line) ?: continue
+                            val name = file.path.substringAfterLast('/')
+                            val mime = MediaTypes.mimeTypeOf(name) ?: continue
+                            items += RemoteMedia(
+                                remoteId = file.path,
+                                displayName = name,
+                                mimeType = mime,
+                                isVideo = MediaTypes.isVideoMime(mime),
+                                sizeBytes = file.size,
+                                dateTakenEpochMs = file.mtime * 1000L,
+                                thumbnailUrl = null,
+                            )
                         }
                     }
-                    walk(root)
-
+                    command.join()
+                    val status = command.exitStatus
+                    if (status != null && status != 0) {
+                        error("NAS listing failed (exit $status): ${command.exitErrorMessage.orEmpty()}")
+                    }
                     MediaPage(items.sortedByDescending { it.dateTakenEpochMs }, null)
                 }
             }
@@ -252,22 +257,33 @@ class NasMediaSource(
             }
         }
 
-    private fun RemoteResourceInfo.toRemoteMedia(mime: String): RemoteMedia {
-        val attrs = attributes
-        return RemoteMedia(
-            remoteId = path,
-            displayName = name,
-            mimeType = mime,
-            isVideo = MediaTypes.isVideoMime(mime),
-            sizeBytes = attrs.size,
-            // SFTP only reports mtime; good enough for sort order on an archive
-            // where files are not edited after being moved there.
-            dateTakenEpochMs = attrs.mtime * 1000L,
-            // QTS thumbnails are files beside the original, not a URL the UI
-            // can load; fetchThumbnail copies one into our own cache.
-            thumbnailUrl = null,
-        )
+    /** One batched `find | stat` command, with hidden QTS folders filtered remotely. */
+    private fun listingCommand(root: String): String {
+        // A shell `while read; stat` loop still needs one stat per file (~3 min
+        // for 100k files). Feeding NUL-separated paths to one xargs invocation
+        // batches them into a few stat processes (~1 min).
+        val skip = SKIPPED_DIR_NAMES.joinToString("") { name ->
+            val pattern = if (name.startsWith('.')) "/\\$name/" else "/$name/"
+            " | grep -v '$pattern'"
+        }
+        return "find ${shellQuote(root)} -follow -type f$skip" +
+            " | tr '\\n' '\\0' | xargs -0 -r stat -c '%n|%s|%Y'"
     }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+    /** Parses `path|size|mtime` from the right so paths may contain `|`. */
+    private fun parseStatLine(line: String): ListedFile? {
+        val last = line.lastIndexOf('|')
+        if (last <= 0) return null
+        val prev = line.lastIndexOf('|', last - 1)
+        if (prev <= 0 || last == prev + 1) return null
+        val size = line.substring(prev + 1, last).toLongOrNull() ?: return null
+        val mtime = line.substring(last + 1).toLongOrNull() ?: return null
+        return ListedFile(line.substring(0, prev), size, mtime)
+    }
+
+    private data class ListedFile(val path: String, val size: Long, val mtime: Long)
 
     private companion object {
         const val THUMB_EDGE = 384

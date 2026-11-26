@@ -67,6 +67,38 @@ class MediaRepositoryTest {
     }
 
     @Test
+    fun timelineHidesTheCloudCopyOfALocalPhoto() {
+        val db = newDb()
+        db.sourceQueries.upsert(
+            id = "local", type = "LOCAL", displayName = "This device",
+            enabled = 1, isUploadTarget = 0, configJson = "{}",
+            lastSyncedAt = null, sortOrder = 0, lastSyncError = null,
+        )
+        db.sourceQueries.upsert(
+            id = "drive", type = "GOOGLE_DRIVE", displayName = "Drive",
+            enabled = 1, isUploadTarget = 1, configJson = "{}",
+            lastSyncedAt = null, sortOrder = 0, lastSyncError = null,
+        )
+        fun add(id: String, sourceId: String, name: String, date: Long) {
+            db.mediaItemQueries.upsert(
+                id = id, sourceId = sourceId, remoteId = id,
+                displayName = name, mimeType = "image/jpeg", isVideo = 0,
+                sizeBytes = 100, width = null, height = null, dateTaken = date,
+                contentHash = null, thumbCachePath = null, originalCachePath = null,
+                syncState = "INDEXED", remoteThumbUrl = null, indexedAt = 0,
+            )
+        }
+        add("local:1", "local", "same.jpg", 2000)
+        add("drive:1", "drive", "same.jpg", 1000)
+        add("local:2", "local", "other.jpg", 3000)
+
+        val page = MediaRepository(db).timelinePage(limit = 50, offset = 0)
+
+        assertEquals(listOf("other.jpg", "same.jpg"), page.map { it.displayName })
+        assertEquals("local:1", page.single { it.displayName == "same.jpg" }.id)
+    }
+
+    @Test
     fun onlyOneMoveTargetAllowed() {
         val repo = MediaRepository(newDb())
         repo.upsertCloudSource("drive_a", SourceType.GOOGLE_DRIVE, "Drive A")
