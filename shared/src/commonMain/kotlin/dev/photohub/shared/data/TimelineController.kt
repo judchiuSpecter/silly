@@ -154,7 +154,23 @@ class TimelineController(
                 })
             }
         }
-        val message = outcome.exceptionOrNull()?.let { it.message?.takeIf { msg -> msg.isNotBlank() } ?: "sync failed" }
+        val failure = outcome.exceptionOrNull()
+        val message = failure?.let { it.message?.takeIf { msg -> msg.isNotBlank() } ?: "sync failed" }
+        if (failure != null) {
+            // Keep the card short but leave the full cause chain in logcat: an
+            // SFTP abort can mean DNS, handshake, a killed remote command or a
+            // dropped socket, and those need different fixes.
+            val detail = buildString {
+                append("[sync:${config.id}] ")
+                var cause: Throwable? = failure
+                while (cause != null) {
+                    if (this.isNotBlank() && !endsWith("] ")) append(" <- ")
+                    append(cause::class.simpleName).append(": ").append(cause.message)
+                    cause = cause.cause
+                }
+            }
+            println(detail)
+        }
         if (persistError) repository.setSyncError(config.id, message)
         return message
     }
