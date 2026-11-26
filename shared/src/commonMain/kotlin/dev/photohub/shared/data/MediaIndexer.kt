@@ -54,6 +54,7 @@ class MediaIndexer(private val db: PhotoHubDatabase) {
                     height = item.height?.toLong(),
                     dateTaken = item.dateTakenEpochMs,
                     contentHash = item.contentHash,
+                    thumbCacheKey = ThumbnailKeys.forItem(source.config, item),
                     thumbCachePath = null,
                     originalCachePath = null,
                     syncState = "INDEXED",

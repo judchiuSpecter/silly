@@ -26,6 +26,7 @@ class TimelineGroupingTest {
         height = null,
         dateTaken = dateTaken,
         contentHash = contentHash,
+        thumbCacheKey = null,
         metadataJson = null,
         thumbCachePath = null,
         originalCachePath = null,

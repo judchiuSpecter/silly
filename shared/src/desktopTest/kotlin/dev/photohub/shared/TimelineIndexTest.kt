@@ -23,6 +23,7 @@ class TimelineIndexTest {
         height = null,
         dateTaken = 0L,
         contentHash = null,
+        thumbCacheKey = null,
         metadataJson = null,
         thumbCachePath = null,
         originalCachePath = null,

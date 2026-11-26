@@ -46,6 +46,9 @@ fun migrateSchema(driver: SqlDriver) {
             0,
         )
     }
+    runCatching {
+        driver.execute(null, "ALTER TABLE MediaItem ADD COLUMN thumbCacheKey TEXT", 0)
+    }
 }
 
 /**

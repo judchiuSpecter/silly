@@ -36,6 +36,7 @@ class BulkSelectTest {
         height = null,
         dateTaken = LocalDate.parse(date).atStartOfDayIn(utc).toEpochMilliseconds(),
         contentHash = null,
+        thumbCacheKey = null,
         metadataJson = null,
         thumbCachePath = null,
         originalCachePath = null,

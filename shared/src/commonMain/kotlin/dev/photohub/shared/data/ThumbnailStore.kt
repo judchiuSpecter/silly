@@ -4,6 +4,7 @@ import dev.photohub.shared.platform.cacheDir
 import dev.photohub.shared.platform.fileSystem
 import dev.photohub.shared.platform.renderThumbnail
 import dev.photohub.shared.platform.thumbnailConcurrency
+import dev.photohub.shared.db.MediaItem
 import dev.photohub.shared.db.PhotoHubDatabase
 import dev.photohub.shared.model.RemoteMedia
 import dev.photohub.shared.source.MediaSource
@@ -71,7 +72,7 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
             val results = coroutineScope {
                 batch.map { row ->
                     async {
-                        val target = thumbDir / "${row.id.thumbFileName()}"
+                        val target = keyedTarget(row)
 
                         // A file left by a previous run is reused; only the DB
                         // link was lost, so there is nothing to re-render.
@@ -129,9 +130,21 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
         if (pending.isEmpty()) return Stats(0, 0, 0)
 
         var generated = 0
+        var reused = 0
         var failed = 0
         for (row in pending) {
-            val target = thumbDir / "${row.id.thumbFileName()}"
+            val target = keyedTarget(row)
+
+            // A newly connected source has its own row id but the same stable
+            // key, so its thumbnail is already on disk. Link it instead of
+            // downloading the remote file again.
+            if (fileSystem.exists(target)) {
+                db.mediaItemQueries.setThumbCache(target.toString(), row.id)
+                reused++
+                onProgress(generated + reused + failed)
+                continue
+            }
+
             val remote = RemoteMedia(
                 remoteId = row.remoteId,
                 displayName = row.displayName,
@@ -149,9 +162,30 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
             } else {
                 failed++
             }
-            onProgress(generated + failed)
+            onProgress(generated + reused + failed)
         }
-        return Stats(generated = generated, reused = 0, failed = failed)
+        return Stats(generated = generated, reused = reused, failed = failed)
+    }
+
+    /**
+     * Prefers the stable cross-reconnect key. On an upgraded database the key
+     * is null and the old row-id filename is adopted once, so already cached
+     * thumbnails are not thrown away by the schema change.
+     */
+    private fun keyedTarget(row: MediaItem): Path {
+        val keyed = thumbDir / "${(row.thumbCacheKey ?: row.id).thumbFileName()}"
+        if (fileSystem.exists(keyed) || row.thumbCacheKey == null) return keyed
+
+        val legacy = thumbDir / "${row.id.thumbFileName()}"
+        if (fileSystem.exists(legacy)) {
+            val adopted = runCatching {
+                fileSystem.copy(legacy, keyed)
+                fileSystem.delete(legacy)
+                keyed
+            }.getOrDefault(legacy)
+            return adopted
+        }
+        return keyed
     }
 
     /**

@@ -26,7 +26,9 @@ import java.io.File
  * Timeline sync stays read-only, but an explicitly chosen NAS archive target
  * can receive copies and delete its own copies when the user archives or deletes
  * a photo. Writes go through [NasArchiveWriter], which verifies bytes before a
- * copy is considered complete. There is no cursor: one `ls` walk of
+ * copy is considered complete. QTS's own `.@__thumb` JPEGs are used for grid
+ * thumbnails when present, falling back to the original. There is no cursor:
+ * one `ls` walk of
  * [NasSourceConfig.remotePath] is cheap enough (recursive directory listing,
  * not a download) to do fully on every refresh.
  *
@@ -66,8 +68,8 @@ class NasMediaSource(
                             if (entry.name == "." || entry.name == "..") continue
                             // QTS keeps a hidden recycle bin and a thumbnail
                             // cache beside every share; neither belongs in the
-                            // timeline, and the recycle bin can hold deleted
-                            // copies of things already shown elsewhere.
+                            // timeline as media, though fetchThumbnail reads the
+                            // latter instead of downloading full originals.
                             if (entry.name in SKIPPED_DIR_NAMES) continue
                             when {
                                 entry.isDirectory -> walk(entry.path)
@@ -98,7 +100,7 @@ class NasMediaSource(
                         ?: error("Thumbnail path has no parent directory")
 
                     try {
-                        downloadTo(item.remoteId, raw)
+                        downloadThumbnail(item, raw)
                         if (!renderThumbnail(raw.toString(), target, THUMB_EDGE)) {
                             error("Could not render a NAS thumbnail for ${item.displayName}")
                         }
@@ -191,6 +193,39 @@ class NasMediaSource(
     }
 
     /**
+     * Prefers QTS's pre-rendered JPEG over the original. A full NAS can hold
+     * 100k+ files; pulling a 30KB server thumbnail instead of a multi-MB photo
+     * is the difference between a usable timeline and a long SFTP transfer.
+     * If the NAS has no cached thumb, fall back to the original in one pass.
+     */
+    private suspend fun downloadThumbnail(item: RemoteMedia, target: Path) {
+        val candidates = serverThumbnailPaths(item.remoteId)
+        withClient { ssh ->
+            ssh.newSFTPClient().use { sftp ->
+                val serverThumb = candidates.firstOrNull { path ->
+                    runCatching { sftp.stat(path) != null }.getOrDefault(false)
+                }
+                sftp.get(
+                    serverThumb ?: item.remoteId,
+                    FileSystemFile(File(target.toString())),
+                )
+            }
+        }
+    }
+
+    /** `default` is ~530px, `s800` ~1066px, `s100` ~130px; all use the source name. */
+    private fun serverThumbnailPaths(remotePath: String): List<String> {
+        val slash = remotePath.lastIndexOf('/')
+        val parent = if (slash <= 0) "" else remotePath.substring(0, slash)
+        val name = remotePath.substring(slash + 1)
+        val thumbDir = when (parent) {
+            "", "/" -> "/.@__thumb"
+            else -> "$parent/.@__thumb"
+        }
+        return listOf("default", "s800", "s100").map { "$thumbDir/$it$name" }
+    }
+
+    /**
      * Opens one short-lived connection per call; the NAS is only occasionally
      * reachable. Closing the transport on cancellation is essential: sshj's
      * SFTP reads are blocking, so without this a timed-out thumbnail would keep
@@ -228,8 +263,8 @@ class NasMediaSource(
             // SFTP only reports mtime; good enough for sort order on an archive
             // where files are not edited after being moved there.
             dateTakenEpochMs = attrs.mtime * 1000L,
-            // No server-side thumbnail URL over SFTP; ThumbnailStore downloads
-            // and renders one into the cache before the grid needs it.
+            // QTS thumbnails are files beside the original, not a URL the UI
+            // can load; fetchThumbnail copies one into our own cache.
             thumbnailUrl = null,
         )
     }

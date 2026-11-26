@@ -61,6 +61,7 @@ fun MediaItemQueries.upsert(
     syncState: String,
     remoteThumbUrl: String?,
     indexedAt: Long,
+    thumbCacheKey: String? = null,
 ): QueryResult<Long> {
     insertIgnoringExisting(
         id = id,
@@ -74,6 +75,7 @@ fun MediaItemQueries.upsert(
         height = height,
         dateTaken = dateTaken,
         contentHash = contentHash,
+        thumbCacheKey = thumbCacheKey,
         thumbCachePath = thumbCachePath,
         originalCachePath = originalCachePath,
         syncState = syncState,
@@ -89,6 +91,7 @@ fun MediaItemQueries.upsert(
         height = height,
         dateTaken = dateTaken,
         contentHash = contentHash,
+        thumbCacheKey = thumbCacheKey,
         remoteThumbUrl = remoteThumbUrl,
         indexedAt = indexedAt,
         id = id,
