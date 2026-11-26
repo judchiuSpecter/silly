@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -233,6 +234,7 @@ private fun SourceCard(
     // until it is connected again (the device source is always live).
     val showEnabled = account.enabled &&
         (account.type == SourceType.LOCAL || account.state == LinkState.LINKED)
+    var confirmDelete by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -432,7 +434,7 @@ private fun SourceCard(
             // Separate from Disconnect: turning a source off keeps the entry,
             // its history and its saved sign-in; this removes all three.
             if (account.type != SourceType.LOCAL && account.state != LinkState.LINKING) {
-                TextButton(onClick = onDelete) {
+                TextButton(onClick = { confirmDelete = true }) {
                     Text("Delete entry", color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -465,6 +467,38 @@ private fun SourceCard(
                 OutlinedButton(onClick = onRetry) { Text("Retry") }
             }
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete ${account.displayName}?") },
+            text = {
+                Text(
+                    "This forgets the saved sign-in and removes this source's indexed " +
+                        "photos from Silly. Nothing is deleted from the cloud or NAS.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text("Delete entry", color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

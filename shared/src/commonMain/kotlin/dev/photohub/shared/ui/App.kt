@@ -34,8 +34,10 @@ import dev.photohub.shared.data.PhotoActionsController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.db.MediaItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The two screens PhotoHub has. Kept as an enum — a nav library would be overkill. */
 private enum class Screen { TIMELINE, ACCOUNTS }
@@ -93,7 +95,7 @@ fun App(
     // cached page is enough to swap the placeholder for the real image.
     val ensureVisibleThumbnail: suspend (MediaItem) -> Unit = { media ->
         val path = fullscreenImages?.ensureThumbnail(media)
-        if (path != null) controller.republish()
+        if (path != null) withContext(Dispatchers.IO) { controller.republish() }
     }
 
     /** Item being shown full-screen, or null when on the timeline grid. */

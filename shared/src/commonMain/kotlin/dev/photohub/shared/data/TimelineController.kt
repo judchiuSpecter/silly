@@ -4,9 +4,11 @@ import dev.photohub.shared.db.MediaItem
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.source.SourceRegistry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 
 /**
  * Drives the timeline: exposes the cached items the UI renders and refreshes
@@ -43,7 +45,7 @@ class TimelineController(
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** Publishes whatever is already cached, without touching any source. */
-    fun loadCached() {
+    suspend fun loadCached() = withContext(Dispatchers.IO) {
         _state.value = _state.value.copy(items = page(), error = null)
     }
 
@@ -67,6 +69,9 @@ class TimelineController(
         // during thumbnail generation), and a suspended refresh coroutine that
         // escapes would leave the top-bar spinner up forever. Always clear it.
         try {
+            // Indexing 100k NAS rows writes a huge SQLite transaction. Keeping
+            // that on the UI dispatcher makes the phone ANR mid-refresh.
+            withContext(Dispatchers.IO) {
             // The device source is implicit: make sure its row exists before the
             // first scan, but never reset its settings on later launches.
             val localId = repository.ensureLocalSource().id
@@ -110,6 +115,7 @@ class TimelineController(
                 // Keep a local failure if there was one; otherwise report the clouds.
                 error = localError ?: cloudErrors.takeIf { it.isNotEmpty() }?.joinToString("; "),
             )
+            }
         } finally {
             _state.value = _state.value.copy(isRefreshing = false)
         }
@@ -126,8 +132,8 @@ class TimelineController(
      * clears the alert on success, or replaces it with whatever went wrong
      * this time.
      */
-    suspend fun retrySource(sourceId: String) {
-        val config = repository.sourceById(sourceId) ?: return
+    suspend fun retrySource(sourceId: String) = withContext(Dispatchers.IO) {
+        val config = repository.sourceById(sourceId) ?: return@withContext
         syncOne(config, persistError = true)
         _state.value = _state.value.copy(items = page())
     }
