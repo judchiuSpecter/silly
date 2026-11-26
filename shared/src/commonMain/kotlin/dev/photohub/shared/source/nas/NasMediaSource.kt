@@ -10,17 +10,19 @@ import dev.photohub.shared.source.MediaTypes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.xfer.FileSystemFile
 import okio.Path
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 
 /**
  * NAS archive as a PhotoHub media source, reached over SFTP.
@@ -28,11 +30,11 @@ import java.io.InputStreamReader
  * Timeline sync stays read-only, but an explicitly chosen NAS archive target
  * can receive copies and delete its own copies when the user archives or deletes
  * a photo. Writes go through [NasArchiveWriter], which verifies bytes before a
- * copy is considered complete. QTS's own `.@__thumb` JPEGs are used for grid
- * thumbnails when present, falling back to the original. There is no cursor:
- * one `ls` walk of
- * [NasSourceConfig.remotePath] is cheap enough (recursive directory listing,
- * not a download) to do fully on every refresh.
+ * copy is considered complete. Listing and image thumbnails come from QTS's
+ * File Station HTTP API: compact paged JSON for the 96k archive and small
+ * server-rendered JPEGs, so refresh no longer holds an SSH socket open for
+ * minutes. SSH remains only for originals and archive writes. There is no
+ * cursor: the whole page-walk is repeated on every refresh.
  *
  * QTS ships a self-signed host key by default, so verification is intentionally
  * promiscuous here rather than pinned — the user already decided to trust this
@@ -57,45 +59,67 @@ class NasMediaSource(
     override val canDelete: Boolean get() = true
 
     override suspend fun list(cursor: String?): Result<MediaPage> = withContext(Dispatchers.IO) {
-        retryTransient {
-            runCatching {
+        runCatching {
             if (cursor != null) return@runCatching MediaPage(emptyList(), null)
-
-            withClient { ssh ->
-                ssh.startSession().use { session ->
-                    // A directory-at-a-time SFTP walk needed ~100k round trips
-                    // for this archive and looked like a frozen app. One remote
-                    // shell command returns the same metadata in one stream.
-                    val command = session.exec(listingCommand(settings.remotePath.ifBlank { "/" }))
-                    val items = mutableListOf<RemoteMedia>()
-                    BufferedReader(InputStreamReader(command.inputStream, Charsets.UTF_8)).use { reader ->
-                        while (true) {
-                            val line = reader.readLine() ?: break
-                            val file = parseStatLine(line) ?: continue
-                            val name = file.path.substringAfterLast('/')
-                            val mime = MediaTypes.mimeTypeOf(name) ?: continue
-                            items += RemoteMedia(
-                                remoteId = file.path,
-                                displayName = name,
-                                mimeType = mime,
-                                isVideo = MediaTypes.isVideoMime(mime),
-                                sizeBytes = file.size,
-                                dateTakenEpochMs = file.mtime * 1000L,
-                                thumbnailUrl = null,
-                            )
-                        }
-                    }
-                    command.join()
-                    val status = command.exitStatus
-                    if (status != null && status != 0) {
-                        error("NAS listing failed (exit $status): ${command.exitErrorMessage.orEmpty()}")
-                    }
-                    MediaPage(items.sortedByDescending { it.dateTakenEpochMs }, null)
-                }
-            }
-        }
+            val api = fileStation ?: error("NAS File Station API is not configured.")
+            val root = settings.remotePath
+                .removePrefix("/share")
+                .ifBlank { "/" }
+                .trimEnd('/')
+                .ifBlank { "/" }
+            val items = walkFileStation(api, root)
+            MediaPage(items.sortedByDescending { it.dateTakenEpochMs }, null)
         }
     }
+
+    /**
+     * Walks the archive in small File Station pages. The gateway only forwards
+     * HTTPS 443 now, so listing must not depend on a long-lived SSH socket.
+     * Up to [WALK_CONCURRENCY] directories are paged at once — enough to finish
+     * ~1,000 directories quickly without hammering the NAS or the phone.
+     */
+    private suspend fun walkFileStation(api: FileStationApi, root: String): List<RemoteMedia> =
+        coroutineScope {
+            val semaphore = Semaphore(WALK_CONCURRENCY)
+
+            suspend fun walk(path: String): List<RemoteMedia> {
+                val output = mutableListOf<RemoteMedia>()
+                var start = 0
+                val folders = mutableListOf<String>()
+                while (true) {
+                    val page = api.list(path, start, LIST_PAGE_SIZE)
+                    val entries = page.datas
+                    for (entry in entries) {
+                        val name = entry.filename
+                        if (name.isBlank() || name.startsWith(".") || name in SKIPPED_DIR_NAMES) continue
+                        if (entry.isfolder == 1) {
+                            folders += "$path/$name"
+                            continue
+                        }
+                        val mime = MediaTypes.mimeTypeOf(name) ?: continue
+                        output += RemoteMedia(
+                            remoteId = "/share$path/$name",
+                            displayName = name,
+                            mimeType = mime,
+                            isVideo = MediaTypes.isVideoMime(mime),
+                            sizeBytes = entry.filesize.toLongOrNull() ?: 0L,
+                            dateTakenEpochMs = entry.epochmt * 1000L,
+                            thumbnailUrl = null,
+                        )
+                    }
+                    start += entries.size
+                    if (entries.isEmpty() || start >= page.total) break
+                }
+                folders.map { folder ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit { walk(folder) }
+                    }
+                }.awaitAll().forEach { output.addAll(it) }
+                return output
+            }
+
+            semaphore.withPermit { walk(root) }
+        }
 
     override suspend fun fetchThumbnail(item: RemoteMedia, target: Path): Result<Path> =
         withContext(Dispatchers.IO) {
@@ -256,36 +280,6 @@ class NasMediaSource(
     }
 
     /**
-     * Retries a listing that failed for a transient socket/DNS reason. One
-     * aborted SSH connection must not leave the source flagged and empty when a
-     * fresh connection immediately works.
-     */
-    private suspend fun <T> retryTransient(block: suspend () -> Result<T>): Result<T> {
-        repeat(LISTING_ATTEMPTS) { attempt ->
-            val result = block()
-            if (result.isSuccess) return result
-            val failure = result.exceptionOrNull()
-            if (attempt == LISTING_ATTEMPTS - 1 || failure == null || !failure.isTransientNasFailure()) {
-                return result
-            }
-            delay(LISTING_RETRY_DELAY_MS * (attempt + 1))
-        }
-        error("unreachable")
-    }
-
-    private fun Throwable.isTransientNasFailure(): Boolean {
-        val text = (message ?: toString()).lowercase()
-        return listOf(
-            "software caused connection abort",
-            "connection reset",
-            "broken pipe",
-            "timeout expired",
-            "unknownhost",
-            "connect timed out",
-        ).any { text.contains(it) }
-    }
-
-    /**
      * Opens one short-lived connection per call; the NAS is only occasionally
      * reachable. Closing the transport on cancellation is essential: sshj's
      * SFTP reads are blocking, so without this a timed-out thumbnail would keep
@@ -302,9 +296,9 @@ class NasMediaSource(
             // A dead host fails at TCP connect in 5s; the SSH handshake gets a
             // slightly longer socket timeout. Cancelling a coroutine here used
             // to close the transport mid-handshake and surface as "Software
-            // caused connection abort", so bound the socket instead. Listing
-            // afterwards restores an unlimited read timeout: `find | stat`
-            // legitimately takes a minute on a 100k-photo archive.
+            // caused connection abort", so bound the socket instead. Original
+            // downloads afterwards restore an unlimited read timeout because
+            // video files are much larger than a metadata request.
             ssh.setConnectTimeout(NAS_CONNECT_TIMEOUT_MS.toInt())
             ssh.setTimeout(NAS_HANDSHAKE_TIMEOUT_MS.toInt())
             val closeOnCancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
@@ -321,41 +315,13 @@ class NasMediaSource(
             }
         }
 
-    /** One batched `find | stat` command, with hidden QTS folders filtered remotely. */
-    private fun listingCommand(root: String): String {
-        // A shell `while read; stat` loop still needs one stat per file (~3 min
-        // for 100k files). Feeding NUL-separated paths to one xargs invocation
-        // batches them into a few stat processes (~1 min).
-        val skip = SKIPPED_DIR_NAMES.joinToString("") { name ->
-            val pattern = if (name.startsWith('.')) "/\\$name/" else "/$name/"
-            " | grep -v '$pattern'"
-        }
-        return "find ${shellQuote(root)} -follow -type f$skip" +
-            " | tr '\\n' '\\0' | xargs -0 -r stat -c '%n|%s|%Y'"
-    }
-
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
-    /** Parses `path|size|mtime` from the right so paths may contain `|`. */
-    private fun parseStatLine(line: String): ListedFile? {
-        val last = line.lastIndexOf('|')
-        if (last <= 0) return null
-        val prev = line.lastIndexOf('|', last - 1)
-        if (prev <= 0 || last == prev + 1) return null
-        val size = line.substring(prev + 1, last).toLongOrNull() ?: return null
-        val mtime = line.substring(last + 1).toLongOrNull() ?: return null
-        return ListedFile(line.substring(0, prev), size, mtime)
-    }
-
-    private data class ListedFile(val path: String, val size: Long, val mtime: Long)
-
     private companion object {
         const val THUMB_EDGE = 384
         const val NAS_CONNECT_TIMEOUT_MS = 5_000L
         const val NAS_HANDSHAKE_TIMEOUT_MS = 15_000L
         const val NAS_THUMB_TIMEOUT_MS = 30_000L
-        const val LISTING_ATTEMPTS = 3
-        const val LISTING_RETRY_DELAY_MS = 1_500L
+        const val LIST_PAGE_SIZE = 2_000
+        const val WALK_CONCURRENCY = 8
         const val MAX_VIDEO_THUMB_BYTES = 50L * 1024 * 1024
 
         /** QTS system folders that live inside every share; never real photos. */

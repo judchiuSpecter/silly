@@ -39,18 +39,18 @@ actual fun createNasHttpClient(): HttpClient {
     return HttpClient(OkHttp) {
         expectSuccess = false
         install(HttpTimeout) {
-            connectTimeoutMillis = 5_000
-            requestTimeoutMillis = 30_000
-            socketTimeoutMillis = 30_000
+            connectTimeoutMillis = 15_000
+            requestTimeoutMillis = 45_000
+            socketTimeoutMillis = 45_000
         }
         engine {
             config {
                 sslSocketFactory(ssl.socketFactory, trustAll)
                 hostnameVerifier { _, _ -> true }
                 retryOnConnectionFailure(true)
-                connectTimeout(5, TimeUnit.SECONDS)
-                readTimeout(30, TimeUnit.SECONDS)
-                writeTimeout(30, TimeUnit.SECONDS)
+                connectTimeout(15, TimeUnit.SECONDS)
+                readTimeout(45, TimeUnit.SECONDS)
+                writeTimeout(45, TimeUnit.SECONDS)
             }
         }
     }

@@ -48,20 +48,20 @@ actual fun createNasHttpClient(): HttpClient {
     return HttpClient(OkHttp) {
         expectSuccess = false
         install(HttpTimeout) {
-            // Thumbnails are small; a missing port forward must fail quickly
-            // instead of holding the refresh spinner for minutes.
-            connectTimeoutMillis = 5_000
-            requestTimeoutMillis = 30_000
-            socketTimeoutMillis = 30_000
+            // Rogers hairpin connections can take longer than a clean LAN
+            // socket; keep this bounded but generous enough for mobile data.
+            connectTimeoutMillis = 15_000
+            requestTimeoutMillis = 45_000
+            socketTimeoutMillis = 45_000
         }
         engine {
             config {
                 sslSocketFactory(ssl.socketFactory, trustAll)
                 hostnameVerifier { _, _ -> true }
                 retryOnConnectionFailure(true)
-                connectTimeout(5, TimeUnit.SECONDS)
-                readTimeout(30, TimeUnit.SECONDS)
-                writeTimeout(30, TimeUnit.SECONDS)
+                connectTimeout(15, TimeUnit.SECONDS)
+                readTimeout(45, TimeUnit.SECONDS)
+                writeTimeout(45, TimeUnit.SECONDS)
             }
         }
     }
