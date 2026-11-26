@@ -133,11 +133,14 @@ class ThumbnailThroughputTest {
 
     @Test
     fun reusesThumbnailWhenTheSameNasIsAddedWithANewSourceId() = runTest {
+        // Cache files live in the real app cache dir; make the key unique so a
+        // previous test run cannot make the first fetch look like a reuse.
+        val unique = System.nanoTime().toString()
         val configJson = Json.encodeToString(
-            NasSourceConfig(host = "nas.local", username = "admin", remotePath = "/share/Photos"),
+            NasSourceConfig(host = "nas-$unique.local", username = "admin", remotePath = "/share/Photos"),
         )
         val item = RemoteMedia(
-            remoteId = "/share/Photos/one.jpg",
+            remoteId = "/share/Photos/$unique.jpg",
             displayName = "one.jpg",
             mimeType = "image/jpeg",
             isVideo = false,

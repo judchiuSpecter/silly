@@ -49,6 +49,11 @@ SELECT * FROM MediaItem WHERE id = ?;
 selectBySource:
 SELECT * FROM MediaItem WHERE sourceId = ? ORDER BY dateTaken DESC;
 
+-- Used before deleting a source entry: a cached file may be shared by another
+-- row with the same stable thumb key, so only unreferenced files may be removed.
+selectCachePaths:
+SELECT thumbCachePath, originalCachePath FROM MediaItem;
+
 selectByHash:
 SELECT * FROM MediaItem WHERE contentHash = ?;
 

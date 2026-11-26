@@ -5,6 +5,8 @@ import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.LocalSourceConfig
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
+import dev.photohub.shared.platform.fileSystem
+import okio.Path.Companion.toPath
 import dev.photohub.shared.db.MediaItem as DbMediaItem
 
 /**
@@ -167,9 +169,22 @@ class MediaRepository(private val db: PhotoHubDatabase) {
      * children are deleted explicitly rather than relying on ON DELETE CASCADE.
      */
     fun deleteSource(id: String) {
+        val rows = db.mediaItemQueries.selectBySource(id).executeAsList()
+        val thumbs = rows.mapNotNull { it.thumbCachePath }.toSet()
+        val originals = rows.mapNotNull { it.originalCachePath }.toSet()
+
         db.uploadQueueQueries.deleteBySource(id)
         db.mediaItemQueries.deleteBySource(id)
         db.sourceQueries.delete(id)
+
+        // Thumbnails are keyed by stable source identity, so another row (for
+        // example a re-added NAS with a different id) may still point at the
+        // same file. Only delete cache files no remaining row references.
+        val remaining = db.mediaItemQueries.selectCachePaths().executeAsList()
+        val usedThumbs = remaining.mapNotNull { it.thumbCachePath }.toSet()
+        val usedOriginals = remaining.mapNotNull { it.originalCachePath }.toSet()
+        (thumbs - usedThumbs).forEach { runCatching { fileSystem.delete(it.toPath()) } }
+        (originals - usedOriginals).forEach { runCatching { fileSystem.delete(it.toPath()) } }
     }
 
     /**

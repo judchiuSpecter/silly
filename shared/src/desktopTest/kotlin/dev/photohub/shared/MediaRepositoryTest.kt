@@ -5,10 +5,14 @@ import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
 import dev.photohub.shared.db.upsert
 import dev.photohub.shared.model.SourceType
+import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class MediaRepositoryTest {
 
@@ -119,5 +123,34 @@ class MediaRepositoryTest {
         )
         val target = db.sourceQueries.selectUploadTarget().executeAsOneOrNull()
         assertEquals("mega", target?.id)
+    }
+
+    @Test
+    fun deletingSourceRemovesOnlyUnreferencedCacheFiles() {
+        val dir = Files.createTempDirectory("source-cleanup").toFile()
+        val sharedThumb = File(dir, "shared-thumb.jpg").apply { writeText("thumb") }
+        val onlyOriginal = File(dir, "original.bin").apply { writeText("original") }
+        val db = newDb()
+        val repo = MediaRepository(db)
+
+        listOf("nas_1", "nas_2").forEach { id ->
+            repo.upsertCloudSource(id, SourceType.NAS_ARCHIVE, "NAS")
+            db.mediaItemQueries.upsert(
+                id = "$id:photo", sourceId = id, remoteId = "photo",
+                displayName = "photo.jpg", mimeType = "image/jpeg", isVideo = 0,
+                sizeBytes = 100, width = null, height = null, dateTaken = 1000,
+                contentHash = null, thumbCacheKey = "nas|host|photo|100",
+                thumbCachePath = sharedThumb.absolutePath,
+                originalCachePath = if (id == "nas_1") onlyOriginal.absolutePath else null,
+                syncState = "THUMB_CACHED", remoteThumbUrl = null, indexedAt = 0,
+            )
+        }
+
+        repo.deleteSource("nas_1")
+
+        assertNull(repo.itemById("nas_1:photo"))
+        assertNotNull(repo.itemById("nas_2:photo"))
+        assertTrue(sharedThumb.isFile, "a thumbnail still used by nas_2 must survive")
+        assertFalse(onlyOriginal.isFile, "an unreferenced original must be removed")
     }
 }
