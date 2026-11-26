@@ -60,6 +60,8 @@ class AccountsController(
         val isUploadTarget: Boolean = false,
         /** Whether this source can receive a Move chosen at action time. */
         val canReceiveMoves: Boolean = false,
+        /** False after Disconnect: credentials are kept but syncing is paused. */
+        val enabled: Boolean = true,
         /** Whether this source's items are shown in the timeline. */
         val showInTimeline: Boolean = true,
         /** Account-wide storage quota, fetched only while this screen is open. */
@@ -334,13 +336,13 @@ class AccountsController(
     }
 
     /**
-     * Disconnects one source: tokens are cleared and the row is disabled, but
-     * its indexed rows are kept so the timeline does not suddenly lose entries.
-     * Nothing is ever deleted from the cloud itself.
+     * Turns one source off. The stored sign-in is deliberately kept: NAS has no
+     * token to refresh, so clearing its password here meant re-entering it after
+     * every pause. Indexed rows are kept too, so the timeline does not suddenly
+     * lose entries. Only [deleteSource] forgets credentials.
      */
     suspend fun unlinkSource(id: String) {
         val source = repository.sourceById(id) ?: return
-        if (!clearCredentials(source)) return
         repository.upsertCloudSource(
             id = id,
             type = source.type,
@@ -352,9 +354,43 @@ class AccountsController(
         if (source.isMoveTarget) repository.clearMoveTarget(id)
         updateScheduler()
 
-        message = "${source.displayName} disconnected."
+        message = "${source.displayName} turned off. Sign-in details are kept."
         errors.remove(id)
         publish()
+    }
+
+    /**
+     * Turns a previously paused source back on without asking for credentials
+     * again. Upload/move destinations stay cleared so reconnecting never quietly
+     * restarts camera uploads.
+     */
+    suspend fun reconnectSource(id: String) {
+        val source = repository.sourceById(id) ?: return
+        if (!isLinked(source)) {
+            message = "Sign in to ${source.displayName} again before turning it on."
+            publish()
+            return
+        }
+        repository.upsertCloudSource(
+            id = id,
+            type = source.type,
+            displayName = source.displayName,
+            configJson = source.configJson,
+            enabled = true,
+        )
+        updateScheduler()
+
+        message = "${source.displayName} turned back on."
+        errors.remove(id)
+        publish()
+    }
+
+    private fun isLinked(source: SourceConfig): Boolean = when (source.type) {
+        SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
+        SourceType.MEGA -> megas.isLinked(source.id)
+        SourceType.NAS_ARCHIVE -> nas.isLinked(source.id)
+        SourceType.LOCAL -> true
+        else -> false
     }
 
     private suspend fun clearCredentials(source: SourceConfig): Boolean = when (source.type) {
@@ -440,15 +476,7 @@ class AccountsController(
     private fun buildState(): State {
         val configured = repository.allSources()
         val rows = configured.map { source ->
-            val linked = when (source.type) {
-                SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
-                SourceType.MEGA -> megas.isLinked(source.id)
-                SourceType.NAS_ARCHIVE -> nas.isLinked(source.id)
-                // The device source is always available; unsupported types never
-                // reach this point through the UI but render honestly if present.
-                SourceType.LOCAL -> true
-                else -> false
-            }
+            val linked = isLinked(source)
             SourceAccount(
                 id = source.id,
                 type = source.type,
@@ -457,12 +485,13 @@ class AccountsController(
                     source.type !in SUPPORTED_TYPES -> LinkState.UNSUPPORTED
                     !oauthConfig.isConfigured && source.type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
                     source.id == linkingId -> LinkState.LINKING
-                    linked && source.enabled -> LinkState.LINKED
+                    linked -> LinkState.LINKED
                     else -> LinkState.NOT_LINKED
                 },
                 canUpload = source.type == SourceType.GOOGLE_DRIVE || source.type == SourceType.MEGA,
                 isUploadTarget = source.isUploadTarget,
                 canReceiveMoves = source.enabled && source.type in MOVE_DESTINATION_TYPES,
+                enabled = source.enabled,
                 showInTimeline = source.showInTimeline,
                 quota = quotas[source.id],
                 error = errors[source.id],
@@ -488,6 +517,7 @@ class AccountsController(
                         else -> LinkState.NOT_LINKED
                     },
                     canUpload = type != SourceType.NAS_ARCHIVE,
+                    enabled = false,
                     quota = quotas[id],
                     error = error,
                 )

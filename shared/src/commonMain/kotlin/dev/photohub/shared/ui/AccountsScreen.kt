@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -122,6 +121,7 @@ fun AccountsScreen(
                     }
                 },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
+                onReconnect = { scope.launch { controller.reconnectSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
                 onSetVisible = { show -> controller.setSourceVisible(source.id, show) },
                 onUploadNow = controller::uploadNow,
@@ -222,6 +222,7 @@ private fun SourceCard(
     quotaLoading: Boolean,
     onLink: () -> Unit,
     onUnlink: () -> Unit,
+    onReconnect: () -> Unit,
     onSetTarget: () -> Unit,
     onSetVisible: (Boolean) -> Unit,
     onUploadNow: () -> Unit,
@@ -230,7 +231,8 @@ private fun SourceCard(
 ) {
     // A disconnected source has no live items to hide, so the toggle is inert
     // until it is connected again (the device source is always live).
-    val showEnabled = account.type == SourceType.LOCAL || account.state == LinkState.LINKED
+    val showEnabled = account.enabled &&
+        (account.type == SourceType.LOCAL || account.state == LinkState.LINKED)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -348,6 +350,16 @@ private fun SourceCard(
                     }
                 }
 
+                account.state == LinkState.LINKED && !account.enabled -> {
+                    Text(
+                        "Turned off. Your sign-in is kept, but Silly won't sync this " +
+                            "source until you turn it back on.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = onReconnect) { Text("Turn back on") }
+                }
+
                 account.state == LinkState.LINKED -> {
                     Text(
                         if (account.type == SourceType.NAS_ARCHIVE) {
@@ -417,8 +429,8 @@ private fun SourceCard(
                 }
             }
 
-            // Separate from Disconnect: disconnecting keeps the entry and its
-            // history so it can be re-linked; this removes it from Silly only.
+            // Separate from Disconnect: turning a source off keeps the entry,
+            // its history and its saved sign-in; this removes all three.
             if (account.type != SourceType.LOCAL && account.state != LinkState.LINKING) {
                 TextButton(onClick = onDelete) {
                     Text("Delete entry", color = MaterialTheme.colorScheme.error)
@@ -583,6 +595,7 @@ private fun LinkMegaDialog(
                     label = { Text("Email") },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -593,9 +606,9 @@ private fun LinkMegaDialog(
                     enabled = !busy,
                     // PasswordVisualTransformation masks the text and marks it
                     // as a password for accessibility/autofill. The keyboard
-                    // type matters too: the default plain-text keyboard offers
-                    // suggestions and can learn what was typed.
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    // type plus plainTextKeyboardOptions keeps suggestions and
+                    // learned words away from credentials.
+                    keyboardOptions = plainTextKeyboardOptions(KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -605,6 +618,7 @@ private fun LinkMegaDialog(
                     label = { Text("2FA code (if enabled)") },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -654,6 +668,7 @@ private fun LinkNasDialog(
                     label = { Text("Host or IP") },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -662,6 +677,7 @@ private fun LinkNasDialog(
                     label = { Text("Username") },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -672,9 +688,9 @@ private fun LinkNasDialog(
                     enabled = !busy,
                     // PasswordVisualTransformation masks the text and marks it
                     // as a password for accessibility/autofill. The keyboard
-                    // type matters too: the default plain-text keyboard offers
-                    // suggestions and can learn what was typed.
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    // type plus plainTextKeyboardOptions keeps suggestions and
+                    // learned words away from credentials.
+                    keyboardOptions = plainTextKeyboardOptions(KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -684,6 +700,7 @@ private fun LinkNasDialog(
                     label = { Text("Folder to index") },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

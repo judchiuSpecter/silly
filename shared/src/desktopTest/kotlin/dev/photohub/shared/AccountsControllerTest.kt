@@ -276,18 +276,31 @@ class AccountsControllerTest {
     }
 
     @Test
-    fun unlinkClearsTokensButKeepsIndexedPhotos() = runTest {
+    fun unlinkKeepsTokensButDisablesTheSource() = runTest {
         val h = build()
         h.controller.linkDrive()
         val id = h.driveSources().single().id
 
         h.controller.unlinkSource(id)
 
-        assertNull(h.store.v["$id.refreshToken"], "tokens must be wiped on disconnect")
+        assertEquals("rt", h.store.v["$id.refreshToken"], "Disconnect must keep the sign-in")
         val source = h.repository.sourceById(id)!!
         assertTrue(!source.enabled)
         assertNull(h.repository.uploadTarget(), "a disconnected target must not stay selected")
-        assertEquals(LinkState.NOT_LINKED, h.account(id).state)
+        assertEquals(LinkState.LINKED, h.account(id).state)
+        assertTrue(!h.account(id).enabled)
+    }
+
+    @Test
+    fun deleteEntryForgetsTheSavedSignIn() = runTest {
+        val h = build()
+        h.controller.linkDrive()
+        val id = h.driveSources().single().id
+
+        h.controller.deleteSource(id)
+
+        assertNull(h.store.v["$id.refreshToken"])
+        assertNull(h.repository.sourceById(id))
     }
 
     @Test
@@ -301,9 +314,9 @@ class AccountsControllerTest {
         assertEquals(2, sources.size)
         assertEquals("rt", h.store.v["google_drive_a.refreshToken"])
         assertEquals("rt", h.store.v["google_drive_b.refreshToken"])
-        // Disconnecting one must not touch the other's credentials.
+        // Disconnecting one must not touch either source's credentials.
         h.controller.unlinkSource("google_drive_a")
-        assertNull(h.store.v["google_drive_a.refreshToken"])
+        assertEquals("rt", h.store.v["google_drive_a.refreshToken"])
         assertEquals("rt", h.store.v["google_drive_b.refreshToken"])
         assertEquals(1, h.driveSources().count { it.enabled })
     }
@@ -325,18 +338,18 @@ class AccountsControllerTest {
     }
 
     @Test
-    fun relinkingAfterUnlinkDoesNotAutomaticallyRestoreTheUploadTarget() = runTest {
+    fun reconnectAfterUnlinkDoesNotAutomaticallyRestoreTheUploadTarget() = runTest {
         val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_a"))
         h.controller.linkDrive()
         h.controller.setUploadTarget("google_drive_a")
         h.controller.unlinkSource("google_drive_a")
 
-        h.controller.linkDrive("google_drive_a")
+        h.controller.reconnectSource("google_drive_a")
 
-        // Disconnecting clears the flag, and re-linking must not quietly set
-        // it again — otherwise a device re-linked for an unrelated reason
-        // (e.g. to just browse a cloud) would restart backing its camera roll
-        // up without the user asking for it.
+        // Turning a source back on must not quietly restore the camera-upload
+        // flag: the user has to choose it again explicitly.
+        assertTrue(h.repository.sourceById("google_drive_a")!!.enabled)
+        assertEquals("rt", h.store.v["google_drive_a.refreshToken"])
         assertNull(h.repository.uploadTarget())
         assertTrue(!h.account("google_drive_a").isUploadTarget)
 
@@ -410,8 +423,9 @@ class AccountsControllerTest {
         assertEquals(megaId, h.repository.uploadTarget()?.id)
 
         h.controller.unlinkSource(megaId)
-        assertEquals(LinkState.NOT_LINKED, h.account(megaId).state)
-        assertTrue(!h.megas.isLinked(megaId))
+        assertEquals(LinkState.LINKED, h.account(megaId).state)
+        assertTrue(h.megas.isLinked(megaId))
+        assertTrue(!h.account(megaId).enabled)
         assertNull(h.repository.uploadTarget())
         // Indexed rows stay put; only the connection was removed.
         assertTrue(h.repository.sourceById(megaId) != null)

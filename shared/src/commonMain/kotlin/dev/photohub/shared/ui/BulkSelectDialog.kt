@@ -162,6 +162,7 @@ internal fun BulkSelectDialog(
                     label = { Text("YYYY-MM-DD") },
                     singleLine = true,
                     isError = dateInvalid,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (dateInvalid) {
@@ -191,6 +192,7 @@ internal fun BulkSelectDialog(
                     label = { Text("MB") },
                     singleLine = true,
                     isError = sizeInvalid,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (sizeInvalid) {
@@ -223,6 +225,7 @@ internal fun BulkSelectDialog(
                     onValueChange = { nameText = it },
                     label = { Text("Filename") },
                     singleLine = true,
+                    keyboardOptions = plainTextKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
                 )
 
