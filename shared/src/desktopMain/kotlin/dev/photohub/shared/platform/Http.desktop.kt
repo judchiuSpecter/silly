@@ -13,7 +13,8 @@ actual fun createHttpClient(): HttpClient = HttpClient(Java) {
         // Long enough for a large chunk on a slow link, short enough that a
         // dead connection does not stall a sync indefinitely.
         requestTimeoutMillis = 5 * 60 * 1000
-        connectTimeoutMillis = 30_000
+        // An offline NAS/cloud must fail fast instead of holding the spinner.
+        connectTimeoutMillis = 5_000
         socketTimeoutMillis = 60_000
     }
 }

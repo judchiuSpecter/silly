@@ -96,7 +96,7 @@ class Mega(
     val baseUrl: String = API_URL,
     val retries: Int = RETRIES,
     val requestTimeout: Duration = TIMEOUT,
-    val connectionTimeout: Duration = TIMEOUT,
+    val connectionTimeout: Duration = CONNECT_TIMEOUT,
     val megaLogger: MegaLogger = MegaLogger(),
     val userAgent: String = "kmp-mega",
     val maxConcurrentChunks: Int = 4,
@@ -167,6 +167,7 @@ class Mega(
         const val API_URL = "https://g.api.mega.co.nz"
         const val RETRIES = 10
         val TIMEOUT = 10.toDuration(DurationUnit.SECONDS)
+        val CONNECT_TIMEOUT = 5.toDuration(DurationUnit.SECONDS)
         val minSleepTime = 10.toDuration(DurationUnit.MILLISECONDS) // for retries
         val maxSleepTime = 5.toDuration(DurationUnit.SECONDS) // for retries
     }
@@ -1094,7 +1095,7 @@ class Mega(
                             httpClient.get(waitUrl) {
                                 timeout {
                                     requestTimeoutMillis = 30_000
-                                    connectTimeoutMillis = 10_000
+                                    connectTimeoutMillis = 5_000
                                     socketTimeoutMillis = 30_000
                                 }
                             }

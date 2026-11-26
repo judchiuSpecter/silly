@@ -88,8 +88,8 @@ expect val thumbnailConcurrency: Int
 
 /**
  * Builds the app's shared HTTP client (OkHttp on Android, the JDK client on
- * desktop). Timeouts are generous enough for large video uploads on a slow
- * connection but bounded, so a stalled request cannot hang a sync forever.
+ * desktop). Connect timeouts are short so offline sources fail fast; request
+ * and socket timeouts stay generous for large uploads on a slow connection.
  */
 expect fun createHttpClient(): io.ktor.client.HttpClient
 

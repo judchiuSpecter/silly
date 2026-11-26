@@ -244,12 +244,18 @@ class NasMediaSource(
             // fingerprint off the NAS; the connection is already opted into by
             // entering its address, same trust model as its self-signed WebDAV cert.
             ssh.addHostKeyVerifier(PromiscuousVerifier())
+            // An unreachable NAS should fail in seconds, not after the OS TCP
+            // timeout. The coroutine-level bound also covers the SSH handshake,
+            // which sshj's connect timeout alone does not limit.
+            ssh.setConnectTimeout(NAS_CONNECT_TIMEOUT_MS.toInt())
             val closeOnCancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
                 if (cause is CancellationException) runCatching { ssh.disconnect() }
             }
             try {
-                ssh.connect(settings.host, settings.port)
-                ssh.authPassword(settings.username, password)
+                withTimeout(NAS_CONNECT_TIMEOUT_MS) {
+                    ssh.connect(settings.host, settings.port)
+                    ssh.authPassword(settings.username, password)
+                }
                 block(ssh)
             } finally {
                 closeOnCancel?.dispose()
@@ -287,6 +293,7 @@ class NasMediaSource(
 
     private companion object {
         const val THUMB_EDGE = 384
+        const val NAS_CONNECT_TIMEOUT_MS = 5_000L
         const val NAS_THUMB_TIMEOUT_MS = 30_000L
         const val MAX_VIDEO_THUMB_BYTES = 50L * 1024 * 1024
 

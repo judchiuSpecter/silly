@@ -12,7 +12,9 @@ actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
 
     install(HttpTimeout) {
         requestTimeoutMillis = 5 * 60 * 1000
-        connectTimeoutMillis = 30_000
+        // Offline devices must fail fast: a long connect wait keeps the
+        // refresh spinner up even though no source can be reached.
+        connectTimeoutMillis = 5_000
         socketTimeoutMillis = 60_000
     }
 
@@ -21,7 +23,7 @@ actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
             // Mobile networks drop connections constantly; letting OkHttp retry
             // a connection-level failure avoids surfacing noise as upload errors.
             retryOnConnectionFailure(true)
-            connectTimeout(30, TimeUnit.SECONDS)
+            connectTimeout(5, TimeUnit.SECONDS)
             readTimeout(60, TimeUnit.SECONDS)
             writeTimeout(60, TimeUnit.SECONDS)
         }
