@@ -23,6 +23,13 @@ data class NasSourceConfig(
      * archive lives at `/share/Photos`.
      */
     val remotePath: String = "/share/Photos",
+    /**
+     * Base URL for QTS's File Station API, used for server-rendered JPEG
+     * thumbnails. Blank means `https://<host>:8443` — forward that external
+     * port to the NAS's HTTPS port 443 on the router. Set explicitly if the
+     * forwarded port or hostname differs.
+     */
+    val webBaseUrl: String = "",
 ) {
     companion object {
         /** Instance ids are `<prefix>_<8 hex>` so they cannot collide with other sources. */

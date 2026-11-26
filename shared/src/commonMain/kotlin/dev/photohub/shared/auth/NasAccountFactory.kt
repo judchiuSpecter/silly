@@ -2,6 +2,7 @@ package dev.photohub.shared.auth
 
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.source.MediaSource
+import dev.photohub.shared.source.nas.FileStationApi
 import dev.photohub.shared.source.nas.NasArchiveWriter
 import dev.photohub.shared.source.nas.NasMediaSource
 import dev.photohub.shared.source.nas.NasSourceConfig
@@ -9,6 +10,7 @@ import dev.photohub.shared.source.nas.newNasSshClient
 import okio.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 
 /**
@@ -67,7 +69,14 @@ class NasAccountFactory(
 
     override suspend fun sourceFor(config: SourceConfig): MediaSource {
         val password = { passwords(config.id).load() }
-        return NasMediaSource(config, password)
+        val settings = runCatching {
+            Json.decodeFromString<NasSourceConfig>(config.configJson)
+        }.getOrElse { NasSourceConfig() }
+        // Remote users forward one HTTPS port on the router rather than using
+        // a LAN address. The default external port is 8443 -> NAS port 443.
+        val webBase = settings.webBaseUrl.trim().ifBlank { "https://${settings.host}:8443" }
+        val api = FileStationApi(webBase, settings.username, password)
+        return NasMediaSource(config, password, api)
     }
 
     override suspend fun archivedFileSize(config: SourceConfig, remotePath: String): Result<Long?> =

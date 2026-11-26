@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.SSHClient
@@ -41,6 +42,7 @@ import java.io.InputStreamReader
 class NasMediaSource(
     override val config: SourceConfig,
     private val credentials: () -> String?,
+    private val fileStation: FileStationApi? = null,
 ) : MediaSource {
 
     private val settings: NasSourceConfig =
@@ -55,7 +57,8 @@ class NasMediaSource(
     override val canDelete: Boolean get() = true
 
     override suspend fun list(cursor: String?): Result<MediaPage> = withContext(Dispatchers.IO) {
-        runCatching {
+        retryTransient {
+            runCatching {
             if (cursor != null) return@runCatching MediaPage(emptyList(), null)
 
             withClient { ssh ->
@@ -91,6 +94,7 @@ class NasMediaSource(
                 }
             }
         }
+        }
     }
 
     override suspend fun fetchThumbnail(item: RemoteMedia, target: Path): Result<Path> =
@@ -105,9 +109,15 @@ class NasMediaSource(
                         ?: error("Thumbnail path has no parent directory")
 
                     try {
-                        downloadThumbnail(item, raw)
-                        if (!renderThumbnail(raw.toString(), target, THUMB_EDGE)) {
-                            error("Could not render a NAS thumbnail for ${item.displayName}")
+                        // QTS can render a small JPEG server-side. That avoids
+                        // pulling a multi-megabyte original over SFTP for every
+                        // visible cell. Videos get a blank placeholder, so they
+                        // fall through to the local ffmpeg renderer.
+                        if (!fetchViaFileStation(item, target)) {
+                            downloadThumbnail(item, raw)
+                            if (!renderThumbnail(raw.toString(), target, THUMB_EDGE)) {
+                                error("Could not render a NAS thumbnail for ${item.displayName}")
+                            }
                         }
                         target
                     } finally {
@@ -230,6 +240,51 @@ class NasMediaSource(
         return listOf("default", "s800", "s100").map { "$thumbDir/$it$name" }
     }
 
+    /** Writes a server-rendered File Station JPEG into the local thumbnail cache. */
+    private suspend fun fetchViaFileStation(item: RemoteMedia, target: Path): Boolean {
+        val api = fileStation ?: return false
+        val folder = item.remoteId.substringBeforeLast('/')
+        val name = item.remoteId.substringAfterLast('/')
+        if (folder.isBlank() || name.isBlank()) return false
+        // File Station paths start at the share root, while remote ids are
+        // absolute SFTP paths like `/share/Photos/2024/clip.mp4`.
+        val sharePath = if (folder.startsWith("/share")) folder.removePrefix("/share") else folder
+        val bytes = api.thumbnail(sharePath, name) ?: return false
+        target.parent?.let { fileSystem.createDirectories(it) }
+        fileSystem.write(target) { write(bytes) }
+        return true
+    }
+
+    /**
+     * Retries a listing that failed for a transient socket/DNS reason. One
+     * aborted SSH connection must not leave the source flagged and empty when a
+     * fresh connection immediately works.
+     */
+    private suspend fun <T> retryTransient(block: suspend () -> Result<T>): Result<T> {
+        repeat(LISTING_ATTEMPTS) { attempt ->
+            val result = block()
+            if (result.isSuccess) return result
+            val failure = result.exceptionOrNull()
+            if (attempt == LISTING_ATTEMPTS - 1 || failure == null || !failure.isTransientNasFailure()) {
+                return result
+            }
+            delay(LISTING_RETRY_DELAY_MS * (attempt + 1))
+        }
+        error("unreachable")
+    }
+
+    private fun Throwable.isTransientNasFailure(): Boolean {
+        val text = (message ?: toString()).lowercase()
+        return listOf(
+            "software caused connection abort",
+            "connection reset",
+            "broken pipe",
+            "timeout expired",
+            "unknownhost",
+            "connect timed out",
+        ).any { text.contains(it) }
+    }
+
     /**
      * Opens one short-lived connection per call; the NAS is only occasionally
      * reachable. Closing the transport on cancellation is essential: sshj's
@@ -299,6 +354,8 @@ class NasMediaSource(
         const val NAS_CONNECT_TIMEOUT_MS = 5_000L
         const val NAS_HANDSHAKE_TIMEOUT_MS = 15_000L
         const val NAS_THUMB_TIMEOUT_MS = 30_000L
+        const val LISTING_ATTEMPTS = 3
+        const val LISTING_RETRY_DELAY_MS = 1_500L
         const val MAX_VIDEO_THUMB_BYTES = 50L * 1024 * 1024
 
         /** QTS system folders that live inside every share; never real photos. */

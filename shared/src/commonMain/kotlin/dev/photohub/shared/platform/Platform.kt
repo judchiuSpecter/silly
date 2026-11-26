@@ -94,6 +94,14 @@ expect val thumbnailConcurrency: Int
 expect fun createHttpClient(): io.ktor.client.HttpClient
 
 /**
+ * HTTP client for a QTS NAS, whose HTTPS certificate is self-signed.
+ *
+ * Kept separate from [createHttpClient] so cloud providers still verify TLS
+ * normally; only the explicitly trusted NAS host gets the relaxed verifier.
+ */
+expect fun createNasHttpClient(): io.ktor.client.HttpClient
+
+/**
  * Cryptographically secure random bytes, for PKCE verifiers and OAuth state.
  * Must not be a seeded/predictable generator.
  */

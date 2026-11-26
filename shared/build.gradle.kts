@@ -112,6 +112,9 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.ktor.client.java)
+            // QTS uses a self-signed HTTPS certificate; OkHttp gives us the
+            // same trust-all configuration on desktop as on Android.
+            implementation(libs.ktor.client.okhttp)
             implementation(libs.cryptography.provider.jdk)
             implementation(libs.sqldelight.sqlite.driver)
             // Video playback: JavaFX media embedded via SwingPanel. JavaFX ships
