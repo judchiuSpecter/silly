@@ -82,43 +82,48 @@ class NasMediaSource(
         coroutineScope {
             val semaphore = Semaphore(WALK_CONCURRENCY)
 
-            suspend fun walk(path: String): List<RemoteMedia> {
-                val output = mutableListOf<RemoteMedia>()
-                var start = 0
-                val folders = mutableListOf<String>()
-                while (true) {
-                    val page = api.list(path, start, LIST_PAGE_SIZE)
-                    val entries = page.datas
-                    for (entry in entries) {
-                        val name = entry.filename
-                        if (name.isBlank() || name.startsWith(".") || name in SKIPPED_DIR_NAMES) continue
-                        if (entry.isfolder == 1) {
-                            folders += "$path/$name"
-                            continue
+            // Only the HTTP page requests take a permit. Holding one across the
+            // recursive child join deadlocks once the tree is deeper than the
+            // permit count: every ancestor waits for children that cannot start.
+            suspend fun pageDirectory(path: String): Pair<List<RemoteMedia>, List<String>> =
+                semaphore.withPermit {
+                    val output = mutableListOf<RemoteMedia>()
+                    val folders = mutableListOf<String>()
+                    var start = 0
+                    while (true) {
+                        val page = api.list(path, start, LIST_PAGE_SIZE)
+                        val entries = page.datas
+                        for (entry in entries) {
+                            val name = entry.filename
+                            if (name.isBlank() || name.startsWith(".") || name in SKIPPED_DIR_NAMES) continue
+                            if (entry.isfolder == 1) {
+                                folders += "$path/$name"
+                                continue
+                            }
+                            val mime = MediaTypes.mimeTypeOf(name) ?: continue
+                            output += RemoteMedia(
+                                remoteId = "/share$path/$name",
+                                displayName = name,
+                                mimeType = mime,
+                                isVideo = MediaTypes.isVideoMime(mime),
+                                sizeBytes = entry.filesize.toLongOrNull() ?: 0L,
+                                dateTakenEpochMs = entry.epochmt * 1000L,
+                                thumbnailUrl = null,
+                            )
                         }
-                        val mime = MediaTypes.mimeTypeOf(name) ?: continue
-                        output += RemoteMedia(
-                            remoteId = "/share$path/$name",
-                            displayName = name,
-                            mimeType = mime,
-                            isVideo = MediaTypes.isVideoMime(mime),
-                            sizeBytes = entry.filesize.toLongOrNull() ?: 0L,
-                            dateTakenEpochMs = entry.epochmt * 1000L,
-                            thumbnailUrl = null,
-                        )
+                        start += entries.size
+                        if (entries.isEmpty() || start >= page.total) break
                     }
-                    start += entries.size
-                    if (entries.isEmpty() || start >= page.total) break
+                    output to folders
                 }
-                folders.map { folder ->
-                    async(Dispatchers.IO) {
-                        semaphore.withPermit { walk(folder) }
-                    }
-                }.awaitAll().forEach { output.addAll(it) }
-                return output
+
+            suspend fun walk(path: String): List<RemoteMedia> {
+                val (items, folders) = pageDirectory(path)
+                val children = folders.map { folder -> async(Dispatchers.IO) { walk(folder) } }
+                return items + children.awaitAll().flatten()
             }
 
-            semaphore.withPermit { walk(root) }
+            walk(root)
         }
 
     override suspend fun fetchThumbnail(item: RemoteMedia, target: Path): Result<Path> =

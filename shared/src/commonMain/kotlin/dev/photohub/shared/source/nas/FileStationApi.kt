@@ -70,21 +70,42 @@ class FileStationApi(
         start: Int,
         limit: Int,
     ): FileList? = try {
-        val response = client.get("$root/cgi-bin/filemanager/utilRequest.cgi") {
-            parameter("func", "get_list")
-            parameter("sid", token)
-            parameter("is_iso", "0")
-            parameter("list_mode", "all")
-            parameter("path", path)
-            parameter("limit", limit.toString())
-            parameter("start", start.toString())
-            parameter("sort", "mt")
-            parameter("dir", "DESC")
+        val response = client.get(
+            requestUrl(
+                "func" to "get_list",
+                "sid" to token,
+                "is_iso" to "0",
+                "list_mode" to "all",
+                "path" to path,
+                "limit" to limit.toString(),
+                "start" to start.toString(),
+                "sort" to "mt",
+                "dir" to "DESC",
+            ),
+        )
+        val url = response.call.request.url.toString().replace(token, "SID")
+        if (response.status.value != 200) {
+            println("[fileStation] list $path: HTTP ${response.status.value} $url")
+            return null
         }
-        if (response.status.value != 200) return null
         val body = response.bodyAsText()
-        if (body.isBlank() || body.trimStart().startsWith("{")) return null
-        return runCatching { json.decodeFromString<FileList>(body) }.getOrNull()
+        if (body.isBlank()) {
+            println("[fileStation] list $path: empty response $url")
+            return null
+        }
+        // get_list returns a JSON object. Do not reject `{` here — that was the
+        // original bug that made every listing fail even after login worked.
+        val parsed = runCatching { json.decodeFromString<FileList>(body) }.getOrNull()
+        if (parsed == null) {
+            println("[fileStation] list $path: bad JSON ${body.take(180)} $url")
+            return null
+        }
+        // QTS uses HTTP 200 even for a bad path; `status` is its real error code.
+        if (parsed.status != null && parsed.status != 0) {
+            println("[fileStation] list $path: API status ${parsed.status} $url")
+            return null
+        }
+        return parsed
     } catch (error: CancellationException) {
         throw error
     } catch (error: Throwable) {
@@ -98,13 +119,15 @@ class FileStationApi(
         name: String,
         size: Int,
     ): ByteArray? {
-        val response = client.get("$root/cgi-bin/filemanager/utilRequest.cgi") {
-            parameter("func", "get_thumb")
-            parameter("sid", token)
-            parameter("path", path)
-            parameter("name", name)
-            parameter("size", size.toString())
-        }
+        val response = client.get(
+            requestUrl(
+                "func" to "get_thumb",
+                "sid" to token,
+                "path" to path,
+                "name" to name,
+                "size" to size.toString(),
+            ),
+        )
         if (response.status.value != 200) return null
         val bytes = response.bodyAsBytes()
         // QTS returns a tiny blank placeholder for videos and a JSON error
@@ -143,10 +166,33 @@ class FileStationApi(
         if (sid == token) sid = null
     }
 
+    /**
+     * QTS rejects `+` as a space in query strings, but Ktor's OkHttp engine
+     * encodes it that way. Build these two GET URLs by hand with `%20` instead.
+     * Login POST parameters are unaffected — QTS accepts `+` there.
+     */
+    private fun requestUrl(vararg query: Pair<String, String>): String =
+        "$root/cgi-bin/filemanager/utilRequest.cgi?" +
+            query.joinToString("&") { (key, value) -> "${encodeQuery(key)}=${encodeQuery(value)}" }
+
+    private fun encodeQuery(value: String): String = buildString {
+        value.encodeToByteArray().forEach { byte ->
+            val code = byte.toInt() and 0xff
+            when {
+                code in 'A'.code..'Z'.code -> append(code.toChar())
+                code in 'a'.code..'z'.code -> append(code.toChar())
+                code in '0'.code..'9'.code -> append(code.toChar())
+                code in "-_.~".map { it.code } -> append(code.toChar())
+                else -> append('%').append(code.toString(16).uppercase().padStart(2, '0'))
+            }
+        }
+    }
+
     @Serializable
     data class FileList(
         val total: Int = 0,
         val datas: List<FileEntry> = emptyList(),
+        val status: Int? = null,
     )
 
     @Serializable
