@@ -63,50 +63,56 @@ class TimelineController(
     suspend fun refresh() {
         _state.value = _state.value.copy(isRefreshing = true, error = null)
 
-        // The device source is implicit: make sure its row exists before the
-        // first scan, but never reset its settings on later launches.
-        val localId = repository.ensureLocalSource().id
-        val configs = repository.allSources()
-            .sortedWith(compareBy({ if (it.type == SourceType.LOCAL) 0 else 1 }, { it.id }))
+        // Anything below can throw (a broken media row, an unsupported codec
+        // during thumbnail generation), and a suspended refresh coroutine that
+        // escapes would leave the top-bar spinner up forever. Always clear it.
+        try {
+            // The device source is implicit: make sure its row exists before the
+            // first scan, but never reset its settings on later launches.
+            val localId = repository.ensureLocalSource().id
+            val configs = repository.allSources()
+                .sortedWith(compareBy({ if (it.type == SourceType.LOCAL) 0 else 1 }, { it.id }))
 
-        var localError: String? = null
-        val cloudErrors = mutableListOf<String>()
+            var localError: String? = null
+            val cloudErrors = mutableListOf<String>()
 
-        for (config in configs) {
-            val isLocal = config.id == localId
-            // The local source is skipped from the persisted-error gate: its
-            // failures are almost always a revoked permission, which can be
-            // re-granted at any moment, so it must keep trying on every
-            // refresh rather than needing a manual retry like a cloud account.
-            if (!isLocal && config.lastSyncError != null) continue
-            val failure = syncOne(config, persistError = !isLocal)
-            if (isLocal) {
-                localError = failure
-            } else if (failure != null) {
-                cloudErrors += "${config.displayName}: $failure"
+            for (config in configs) {
+                val isLocal = config.id == localId
+                // The local source is skipped from the persisted-error gate: its
+                // failures are almost always a revoked permission, which can be
+                // re-granted at any moment, so it must keep trying on every
+                // refresh rather than needing a manual retry like a cloud account.
+                if (!isLocal && config.lastSyncError != null) continue
+                val failure = syncOne(config, persistError = !isLocal)
+                if (isLocal) {
+                    localError = failure
+                } else if (failure != null) {
+                    cloudErrors += "${config.displayName}: $failure"
+                }
+
+                // Show newly indexed items after every source, not just at the end:
+                // one unreachable cloud must not hold up the rest of the grid.
+                _state.value = _state.value.copy(items = page())
             }
 
-            // Show newly indexed items after every source, not just at the end:
-            // one unreachable cloud must not hold up the rest of the grid.
-            _state.value = _state.value.copy(items = page())
+            thumbnails.generateMissing(
+                onProgress = { completed ->
+                    // Republish periodically so the grid sharpens as it goes rather
+                    // than staying blank until the whole library is done.
+                    if (completed % THUMB_REFRESH_INTERVAL == 0) {
+                        _state.value = _state.value.copy(items = page())
+                    }
+                },
+            )
+
+            _state.value = _state.value.copy(
+                items = page(),
+                // Keep a local failure if there was one; otherwise report the clouds.
+                error = localError ?: cloudErrors.takeIf { it.isNotEmpty() }?.joinToString("; "),
+            )
+        } finally {
+            _state.value = _state.value.copy(isRefreshing = false)
         }
-
-        thumbnails.generateMissing(
-            onProgress = { completed ->
-                // Republish periodically so the grid sharpens as it goes rather
-                // than staying blank until the whole library is done.
-                if (completed % THUMB_REFRESH_INTERVAL == 0) {
-                    _state.value = _state.value.copy(items = page())
-                }
-            },
-        )
-
-        _state.value = _state.value.copy(
-            items = page(),
-            isRefreshing = false,
-            // Keep a local failure if there was one; otherwise report the clouds.
-            error = localError ?: cloudErrors.takeIf { it.isNotEmpty() }?.joinToString("; "),
-        )
     }
 
     /**
