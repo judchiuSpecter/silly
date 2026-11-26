@@ -11,7 +11,13 @@ import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.SourceRegistry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okio.Path
 import okio.Path.Companion.toPath
 import java.util.UUID
@@ -54,6 +60,30 @@ class PhotoActionsController(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    // Deletes and moves touch remote originals and can take minutes. They must
+    // outlive the composable that started them — a dialog dismiss or rotation
+    // used to cancel the job mid-batch and leave the source copy behind.
+    private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var actionJob: Job? = null
+
+    /** Starts a delete outside Compose's scope; ignored if one is already running. */
+    fun requestDelete(items: List<MediaItem>, onComplete: () -> Unit = {}) {
+        if (actionJob?.isActive == true || _state.value.running) return
+        actionJob = actionScope.launch {
+            delete(items)
+            withContext(Dispatchers.Main) { onComplete() }
+        }
+    }
+
+    /** Starts a move outside Compose's scope; ignored if one is already running. */
+    fun requestMove(items: List<MediaItem>, destinationId: String, onComplete: () -> Unit = {}) {
+        if (actionJob?.isActive == true || _state.value.running) return
+        actionJob = actionScope.launch {
+            move(items, destinationId)
+            withContext(Dispatchers.Main) { onComplete() }
+        }
+    }
 
     fun clearMessage() {
         lastMessage = null

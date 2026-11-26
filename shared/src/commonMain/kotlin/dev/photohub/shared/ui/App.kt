@@ -22,7 +22,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -35,7 +34,6 @@ import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.db.MediaItem
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 
 /** The two screens PhotoHub has. Kept as an enum — a nav library would be overkill. */
 private enum class Screen { TIMELINE, ACCOUNTS }
@@ -62,7 +60,6 @@ fun App(
     mediaInfo: MediaInfoController? = null,
 ) {
     val state by controller.state.collectAsState()
-    val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf(Screen.TIMELINE) }
     val prefs by settings.settings.collectAsState()
 
@@ -154,10 +151,7 @@ fun App(
     fun performDelete(items: List<MediaItem>) {
         val actions = photoActions ?: return
         if (items.isEmpty()) return
-        scope.launch {
-            actions.delete(items)
-            finishAction()
-        }
+        actions.requestDelete(items) { finishAction() }
     }
 
     fun requestDelete(items: List<MediaItem>) {
@@ -188,10 +182,7 @@ fun App(
     fun performMove(items: List<MediaItem>, destinationId: String) {
         val actions = photoActions ?: return
         if (items.isEmpty()) return
-        scope.launch {
-            actions.move(items, destinationId)
-            finishAction()
-        }
+        actions.requestMove(items, destinationId) { finishAction() }
     }
 
     PhotoHubTheme(mode = prefs.themeMode) {
@@ -311,7 +302,7 @@ fun App(
                                 onThemeModeChange = settings::setThemeMode,
                                 confirmDelete = prefs.confirmDelete,
                                 onConfirmDeleteChange = settings::setConfirmDelete,
-                                onRetrySource = { id -> scope.launch { controller.retrySource(id) } },
+                                onRetrySource = { id -> controller.requestRetrySource(id) },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }

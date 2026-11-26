@@ -62,6 +62,19 @@ class TimelineController(
         refreshJob = backgroundScope.launch { refresh() }
     }
 
+    /** Retries one source outside Compose's scope, with the same guard as refresh. */
+    fun requestRetrySource(sourceId: String) {
+        if (refreshJob?.isActive == true) return
+        refreshJob = backgroundScope.launch {
+            _state.value = _state.value.copy(isRefreshing = true, error = null)
+            try {
+                retrySource(sourceId)
+            } finally {
+                _state.value = _state.value.copy(isRefreshing = false)
+            }
+        }
+    }
+
     /** Publishes whatever is already cached, without touching any source. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
         _state.value = _state.value.copy(items = page(), error = null)
